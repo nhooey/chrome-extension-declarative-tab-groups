@@ -61,8 +61,9 @@
           # The development dependencies as one node_modules, for the checks.
           nodeModules = pkgs.importNpmLock.buildNodeModules (npmLock // { inherit nodejs; });
 
-          # The package's sources, installed under lib/node_modules/; it has
-          # no build step and no executable.
+          # The package: its sources under lib/node_modules/, and the
+          # unpacked extension `npm run build` bundles under
+          # share/declarative-tab-groups/extension/; it has no executable.
           package = pkgs.buildNpmPackage {
             pname = packageJson.name;
             inherit (packageJson) version;
@@ -72,12 +73,17 @@
               fileset = lib.fileset.unions [
                 ./package.json
                 ./package-lock.json
+                ./tsconfig.base.json
+                ./scripts
                 ./src
               ];
             };
             npmDeps = pkgs.importNpmLock npmLock;
             inherit (pkgs.importNpmLock) npmConfigHook;
-            dontNpmBuild = true;
+            postInstall = ''
+              mkdir -p "$out/share/declarative-tab-groups"
+              cp -R dist/extension "$out/share/declarative-tab-groups/extension"
+            '';
           };
 
           # Runs one of package.json's scripts on the sources, the tests and
@@ -91,6 +97,8 @@
                 fileset = lib.fileset.unions [
                   ./package.json
                   ./tsconfig.json
+                  ./tsconfig.base.json
+                  ./scripts
                   ./src
                   ./test
                   ./docs/protocol.md

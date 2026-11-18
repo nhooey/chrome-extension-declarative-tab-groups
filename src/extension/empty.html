@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Empty tab group</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        font:
+          16px/1.5 system-ui,
+          sans-serif;
+        background: Canvas;
+        color: CanvasText;
+      }
+      main {
+        max-width: 32rem;
+        padding: 1.5rem;
+        text-align: center;
+      }
+      #group {
+        font-weight: 600;
+      }
+    </style>
+    <script src="empty.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <h1>The tab group <span id="group">this tab is in</span> is empty</h1>
+      <p>
+        This page holds the group's place until a program gives the group pages
+        to show.
+      </p>
+    </main>
+  </body>
+</html>

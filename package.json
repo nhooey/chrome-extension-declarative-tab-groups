@@ -7,11 +7,14 @@
     "src"
   ],
   "scripts": {
+    "build": "node scripts/build.ts",
     "test": "node --test 'test/**/*.test.ts'",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc -p tsconfig.json && tsc -p src/protocol/tsconfig.json && tsc -p src/extension/tsconfig.json"
   },
   "devDependencies": {
+    "@types/chrome": "^0.3.7",
     "@types/node": "^26.6.6",
+    "esbuild": "^0.28.2",
     "typescript": "^7.0.2"
   }
 }

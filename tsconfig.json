@@ -1,17 +1,8 @@
 {
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "target": "es2023",
     "lib": ["es2023"],
-    "module": "nodenext",
-    "moduleResolution": "nodenext",
-    "strict": true,
-    "exactOptionalPropertyTypes": true,
-    "noUncheckedIndexedAccess": true,
-    "noEmit": true,
-    "allowImportingTsExtensions": true,
-    "erasableSyntaxOnly": true,
-    "verbatimModuleSyntax": true,
     "types": ["node"]
   },
-  "include": ["src", "test"]
+  "include": ["test", "scripts"]
 }
