@@ -1,0 +1,17 @@
+{
+  "name": "declarative-tab-groups",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "node --test 'test/**/*.test.ts'",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  }
+}
