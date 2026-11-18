@@ -9,6 +9,7 @@ import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
 
 import { MAIN_HELP, STATUS_HELP } from "../../src/command/help.ts";
+import { nodeFiles } from "../../src/command/install.ts";
 import { RESPONSE_DEADLINE_MS, runCommand } from "../../src/command/run.ts";
 import { REQUEST_TIMEOUT_MS } from "../../src/host/router.ts";
 import { shortTemporaryFolder } from "../host/processes.ts";
@@ -44,6 +45,9 @@ describe("the command's deadline", () => {
       const status = await runCommand({
         args: ["status"],
         env: { DECLARATIVE_TAB_GROUPS_SOCKET: socket },
+        platform: process.platform,
+        entry: "",
+        files: nodeFiles,
         stdin: new PassThrough(),
         stdout,
         stderr,

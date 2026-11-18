@@ -40,6 +40,9 @@
         name = "chrome-extension-declarative-tab-groups";
       };
 
+      # `programs.declarative-tab-groups`, for a Home Manager configuration.
+      flake.homeManagerModules.default = import ./nix/home-manager-module.nix inputs.self.packages;
+
       perSystem =
         { pkgs, ... }:
         let
@@ -61,13 +64,15 @@
           # The development dependencies as one node_modules, for the checks.
           nodeModules = pkgs.importNpmLock.buildNodeModules (npmLock // { inherit nodejs; });
 
-          # The package: its sources under lib/node_modules/, the unpacked
-          # extension `npm run build` bundles under
-          # share/declarative-tab-groups/extension/, and the bundled
-          # programs under lib/declarative-tab-groups/: the command linked
-          # from bin/, and the host from libexec/, off the PATH since only
-          # Chrome runs it. The fixup phase points their `#!` lines at this
-          # flake's Node.
+          # The package: its sources under lib/node_modules/, and the rest
+          # as scripts/package.ts lays it out from what `npm run build`
+          # bundles: the unpacked extension under
+          # share/declarative-tab-groups/extension/, the host's manifest
+          # under share/declarative-tab-groups/native-messaging-host/, and
+          # the programs under lib/declarative-tab-groups/: the command
+          # linked from bin/, and the host from libexec/, off the PATH since
+          # only Chrome runs it. The fixup phase points their `#!` lines at
+          # this flake's Node.
           package = pkgs.buildNpmPackage {
             pname = packageJson.name;
             inherit (packageJson) version;
@@ -85,22 +90,27 @@
             npmDeps = pkgs.importNpmLock npmLock;
             inherit (pkgs.importNpmLock) npmConfigHook;
             postInstall = ''
-              mkdir -p "$out/share/declarative-tab-groups"
-              cp -R dist/extension "$out/share/declarative-tab-groups/extension"
-              install -D -m 0755 -t "$out/lib/declarative-tab-groups" dist/programs/*.mjs
-              mkdir -p "$out/bin" "$out/libexec"
-              ln -s ../lib/declarative-tab-groups/declarative-tab-groups.mjs "$out/bin/declarative-tab-groups"
-              ln -s ../lib/declarative-tab-groups/declarative-tab-groups-host.mjs "$out/libexec/declarative-tab-groups-host"
+              node scripts/package.ts "$out"
             '';
           };
 
-          # Runs the installed command and host on the flake's Node.
+          # Runs the installed command and host on the flake's Node, and
+          # checks the host's manifest with scripts/check-host-manifest.ts.
           programs = pkgs.runCommand "declarative-tab-groups-programs" {
             inherit package;
+            nativeBuildInputs = [ nodejs ];
+            src = lib.fileset.toSource {
+              root = ./.;
+              fileset = lib.fileset.unions [
+                ./package.json
+                ./scripts/check-host-manifest.ts
+                ./src
+              ];
+            };
           } (builtins.readFile ./nix/check-programs.sh);
 
           # Runs one of package.json's scripts on the sources, the tests and
-          # the document the tests read, with the flake's node_modules.
+          # the files the tests read, with the flake's node_modules.
           npmCheck =
             name: script:
             pkgs.runCommand "declarative-tab-groups-${name}" {
@@ -115,6 +125,8 @@
                   ./src
                   ./test
                   ./docs/protocol.md
+                  ./README.md
+                  ./nix/home-manager-module.nix
                 ];
               };
               nodeModules = "${nodeModules}/node_modules";
@@ -128,6 +140,10 @@
             inherit package programs;
             typecheck = npmCheck "typecheck" "typecheck";
             tests = npmCheck "tests" "test";
+            home-manager-module = import ./nix/check-home-manager-module.nix {
+              inherit lib pkgs package;
+              module = inputs.self.homeManagerModules.default;
+            };
           };
 
           # Repo-specific packages, merged onto the module's dev shell.

@@ -4,10 +4,40 @@ import { COLORS } from "../protocol/index.ts";
 
 export const PROGRAM = "declarative-tab-groups";
 
+const SUCCESS = "  0  success";
+
+const REQUEST_FAILED = `  1  the request failed; error.code and error.message are on standard error`;
+
+const SETUP_FAILED = `  1  install refused a path that holds something else, changing nothing;
+     a step could not be carried out; or the system is not macOS`;
+
+const REQUEST_STATUSES = `  2  usage error: a bad option, argument or URL, or an unusable socket path
+  3  set succeeded, but kept open tabs that hold an unsubmitted form
+  4  not connected: no host listens on the socket, none answers within 130
+     seconds, or the host has no connection to the extension, as when
+     Chrome is not running`;
+
+const SETUP_USAGE = `  2  usage error: a bad option or argument, or a HOME that is not an
+     absolute path`;
+
 const EXIT_STATUSES = `Exit statuses:
-  0  success
-  1  the request failed; error.code and error.message are on standard error
-  2  usage error: a bad option, argument or URL, or an unusable socket path
+${SUCCESS}
+${REQUEST_FAILED}
+${REQUEST_STATUSES}`;
+
+const SETUP_EXIT_STATUSES = `Exit statuses:
+${SUCCESS}
+${SETUP_FAILED}
+${SETUP_USAGE}`;
+
+const ALL_EXIT_STATUSES = `Exit statuses:
+${SUCCESS}
+  1  failure: the request failed, with error.code and error.message on
+     standard error; or install refused a path that holds something else,
+     changing nothing; or a step of install or uninstall could not be
+     carried out; or the system is not macOS
+  2  usage error: a bad option, argument or URL, an unusable socket path,
+     or a HOME that is not an absolute path
   3  set succeeded, but kept open tabs that hold an unsubmitted form
   4  not connected: no host listens on the socket, none answers within 130
      seconds, or the host has no connection to the extension, as when
@@ -20,22 +50,24 @@ Usage:
   ${PROGRAM} --help | --version
 
 Commands:
-  set      make a group hold exactly the given pages, in order
-  get      print a group's pages, one URL per line
-  status   print the versions of the command, the extension and Chrome
+  set         make a group hold exactly the given pages, in order
+  get         print a group's pages, one URL per line
+  status      print the versions of the command, the extension and Chrome
+  install     link the native host and the extension for this user
+  uninstall   remove those links
 
 Options:
   -h, --help   print this help; "${PROGRAM} <command> --help" prints a
                command's own help
   --version    print the command's version
 
-The command sends one request to the native host on its socket,
-$DECLARATIVE_TAB_GROUPS_SOCKET when that is set, else
+The commands set, get and status send one request to the native host on
+its socket, $DECLARATIVE_TAB_GROUPS_SOCKET when that is set, else
 \${XDG_STATE_HOME:-$HOME/.local/state}/declarative-tab-groups/host.sock,
-waits at most 130 seconds for the answer, and prints it. It never starts
-Chrome or any other program, and never retries.
+wait at most 130 seconds for the answer, and print it. The command never
+starts Chrome or any other program, and never retries.
 
-${EXIT_STATUSES}
+${ALL_EXIT_STATUSES}
 
 Example:
   ${PROGRAM} set --group Reading https://example.com/ https://example.org/
@@ -115,4 +147,54 @@ ${EXIT_STATUSES}
 
 Example:
   ${PROGRAM} status
+`;
+
+export const INSTALL_HELP = `${PROGRAM} install: link the native host and the extension for this user
+
+Usage:
+  ${PROGRAM} install [--dry-run]
+
+Links two files of the package this command belongs to, found from the
+command's own location, then prints how to load the extension in Chrome:
+
+  - the native host's manifest, into
+    ~/Library/Application Support/Google/Chrome/NativeMessagingHosts/,
+    where Google Chrome looks for it;
+  - the unpacked extension, at
+    \${XDG_DATA_HOME:-~/.local/share}/declarative-tab-groups/extension,
+    a path that stays the same when the package is updated.
+
+It makes a missing folder, replaces a link it made before, even one to an
+older package, and keeps a link that is already right. When a path holds
+anything else (a file, a folder, or a link that is not this tool's), it
+says so and changes nothing. It never starts Chrome. macOS only.
+
+Options:
+  --dry-run    print each step and change nothing
+  -h, --help   print this help
+
+${SETUP_EXIT_STATUSES}
+
+Example:
+  ${PROGRAM} install --dry-run
+`;
+
+export const UNINSTALL_HELP = `${PROGRAM} uninstall: remove the links install made
+
+Usage:
+  ${PROGRAM} uninstall [--dry-run]
+
+Removes the native host's manifest link and the extension's link, when
+each is this tool's, to this package or another, and says what it leaves:
+anything else at those paths stays. The folders stay too. Remove the
+extension in chrome://extensions as well. macOS only.
+
+Options:
+  --dry-run    print each step and change nothing
+  -h, --help   print this help
+
+${SETUP_EXIT_STATUSES}
+
+Example:
+  ${PROGRAM} uninstall
 `;

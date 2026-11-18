@@ -12,7 +12,7 @@ import {
   type SetSuccess,
   type Success,
 } from "../protocol/index.ts";
-import type { CommandValue } from "./arguments.ts";
+import type { RequestCommand } from "./arguments.ts";
 import { PROGRAM } from "./help.ts";
 
 /** The exit statuses, as `--help` lists them. */
@@ -33,7 +33,7 @@ export const urlsFromText = (text: string): readonly string[] =>
 
 /** The request a command sends; `urls` are `set`'s, from its arguments or its file. */
 export const requestFor = (
-  command: CommandValue,
+  command: RequestCommand,
   urls: readonly string[],
 ): Request => {
   switch (command.command) {
@@ -144,7 +144,7 @@ const lines = (text: readonly string[]): string =>
  * failure the command stands in with.
  */
 export const output = (
-  command: CommandValue,
+  command: RequestCommand,
   outcome: Outcome,
   version: string,
 ): Output => {

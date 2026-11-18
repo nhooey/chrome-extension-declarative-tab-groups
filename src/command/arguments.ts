@@ -2,7 +2,15 @@
 // version, run a subcommand, or report a usage error. Pure.
 
 import { type Color, COLORS } from "../protocol/index.ts";
-import { GET_HELP, MAIN_HELP, PROGRAM, SET_HELP, STATUS_HELP } from "./help.ts";
+import {
+  GET_HELP,
+  INSTALL_HELP,
+  MAIN_HELP,
+  PROGRAM,
+  SET_HELP,
+  STATUS_HELP,
+  UNINSTALL_HELP,
+} from "./help.ts";
 
 /** Where `set` takes its URLs from. */
 export type UrlSource =
@@ -31,7 +39,15 @@ export type StatusCommand = {
   readonly json: boolean;
 };
 
-export type CommandValue = SetCommand | GetCommand | StatusCommand;
+/** A command that sends one request to the host. */
+export type RequestCommand = SetCommand | GetCommand | StatusCommand;
+
+/** `install` or `uninstall`, which change only the user's links, and with `dryRun` nothing at all. */
+export type SetupCommand =
+  | { readonly command: "install"; readonly dryRun: boolean }
+  | { readonly command: "uninstall"; readonly dryRun: boolean };
+
+export type CommandValue = RequestCommand | SetupCommand;
 
 export type Invocation =
   | { readonly kind: "help"; readonly text: string }
@@ -129,6 +145,8 @@ const SUBCOMMANDS = {
   },
   get: { help: GET_HELP, spec: { "--group": "value", "--json": "flag" } },
   status: { help: STATUS_HELP, spec: { "--json": "flag" } },
+  install: { help: INSTALL_HELP, spec: { "--dry-run": "flag" } },
+  uninstall: { help: UNINSTALL_HELP, spec: { "--dry-run": "flag" } },
 } as const satisfies {
   readonly [name: string]: { readonly help: string; readonly spec: OptionSpec };
 };
@@ -228,6 +246,12 @@ const parseSubcommand = (
       name,
     );
   }
+  if (name === "install" || name === "uninstall") {
+    return {
+      kind: "run",
+      command: { command: name, dryRun: flag(scanned.value, "--dry-run") },
+    };
+  }
   const json = flag(scanned.value, "--json");
   if (name === "status") {
     return { kind: "run", command: { command: "status", json } };
@@ -242,7 +266,10 @@ const parseSubcommand = (
 export const parseArguments = (args: readonly string[]): Invocation => {
   const [first, ...rest] = args;
   if (first === undefined) {
-    return usage("a command is needed: set, get or status", null);
+    return usage(
+      "a command is needed: set, get, status, install or uninstall",
+      null,
+    );
   }
   if (first === "--help" || first === "-h") {
     return { kind: "help", text: MAIN_HELP };
@@ -258,7 +285,7 @@ export const parseArguments = (args: readonly string[]): Invocation => {
   return usage(
     isOption(first)
       ? `unknown option ${first}`
-      : `unknown command ${JSON.stringify(first)}; the commands are set, get and status`,
+      : `unknown command ${JSON.stringify(first)}; the commands are set, get, status, install and uninstall`,
     null,
   );
 };

@@ -4,9 +4,11 @@ A Google Chrome extension, a native-messaging host and a command, `declarative-t
 
 ## Layout
 
-- `flake.nix`: the package, the dev shell, the formatter and the checks.
+- `flake.nix`: the package, the Home Manager module, the dev shell, the formatter and the checks.
 - `nix/run-npm-script.sh`: the build command of the checks that run an npm script.
-- `nix/check-programs.sh`: the build command of the `programs` check, which runs the installed command's `--help` and `--version` and sees the installed host refuse outside Google Chrome.
+- `nix/check-programs.sh`: the build command of the `programs` check, which runs the installed command's `--help` and `--version`, checks the host's manifest with `scripts/check-host-manifest.ts`, sees `install --dry-run` find the package's own files on macOS, and sees the installed host refuse outside Google Chrome.
+- `nix/home-manager-module.nix`: `homeManagerModules.default`, whose `programs.declarative-tab-groups` installs the command and makes the two links `install` makes, through `home.file`, reading the paths from `src/command/layout.json` and the host's name from `src/extension/identity.json`.
+- `nix/check-home-manager-module.nix`: the `home-manager-module` check, which evaluates the module with `lib.evalModules` against stand-ins for Home Manager's options.
 - `package.json`, `package-lock.json`: the Node package, written in TypeScript that Node runs by stripping its types. Its dependencies are all for development: TypeScript, Node's and Chrome's types, and esbuild, which bundles the extension, the host and the command.
 - `tsconfig.base.json` and the projects that extend it, so each part is type-checked against only the APIs it may use:
   - `tsconfig.json`: the tests and `scripts/`, with Node's types.
@@ -14,11 +16,13 @@ A Google Chrome extension, a native-messaging host and a command, `declarative-t
   - `src/extension/tsconfig.json`: the extension, with the Web APIs and Chrome's types, and not Node's.
   - `src/host/tsconfig.json` and `src/command/tsconfig.json`: the host and the command, with Node's types.
 - `scripts/build.ts`: `buildExtension`, which writes the unpacked extension into one folder, and `buildPrograms`, which bundles the command and the host into one `.mjs` file each, with a `#!` line for Node.
+- `scripts/package.ts`: `layOutPackage`, which lays out the package from what `npm run build` wrote, as `layout.json` places each file, and writes the host's manifest with the host's absolute path; the Nix package's install phase runs it.
+- `scripts/check-host-manifest.ts`: `hostManifestProblems` and `packageProblems`, what is wrong with a built package's host manifest.
 - `src/protocol/`: the protocol module the extension, the host and the command share. It is pure functional TypeScript, with no I/O and no Node or Chrome API, and `index.ts` exports all of it.
 - `test/protocol/`: its tests, under `node --test` with `node:test` and `node:assert/strict`; `docs.test.ts` parses every `json` example of `docs/protocol.md`.
 - `src/extension/`: the extension. Only the entry points, `background.ts`, `status.ts` and `options.ts`, name the `chrome` global; every other module takes Chrome as a parameter, so the tests run it against fakes.
   - `manifest.json`: the Manifest V3 manifest, not allowed in incognito windows. Its `key`, the public half of an RSA key whose private half exists nowhere, fixes the extension's ID; an unpacked extension needs no private key.
-  - `identity.ts`: `NATIVE_HOST_NAME`, the native host's name, `EXTENSION_ID`, and `extensionIdFromKey`, which derives the ID from a key as Chrome does.
+  - `identity.ts`: `NATIVE_HOST_NAME`, the native host's name, `EXTENSION_ID`, and `extensionIdFromKey`, which derives the ID from a key as Chrome does. The name and the ID are kept in `identity.json`, which the Home Manager module reads too.
   - `browser.ts`: `isGoogleChrome`, true only for a brand list naming "Google Chrome", and `chromeVersion`.
   - `tab-strip.ts`: `TabStrip`, the narrowed interface through which the extension reaches Chrome's tabs, windows, groups and scripts, and whether it may open file URLs. It names exactly the Chrome operations used, none of which can focus a window: there is no `windows.update` or `tabs.highlight`, `tabs.create` takes only `active: false`, `windows.create` only `focused: false`, and `tabs.update` only `{ active: true }`, which the extension calls for its status page alone. `narrowTabStrip` keeps only those operations of Chrome, and passes Chrome only the fields the interface names; its `scripting.executeScript` takes no function and always injects the form check, `hasUnsubmittedForm`. Beside it, `Clock`, through which all waiting goes, `within`, which bounds a wait by the clock, and `Edge`, the two with the extension's page URLs and the signal that aborts when a request is given up.
   - `state.ts`: what the planner knows of Chrome: the groups, each tab's kind (the group's status page, its empty page, a `stray` page of the extension's naming another group, which always closes, or another page) and form state, each group's window's active tab, the window a new group goes in, and whether the status page is on.
@@ -54,10 +58,15 @@ A Google Chrome extension, a native-messaging host and a command, `declarative-t
   - `arguments.ts`: `parseArguments`, from the arguments to help, the version, a command value or a usage error.
   - `help.ts`: the `--help` texts.
   - `output.ts`: `requestFor`, `urlsFromText`, `output`, which renders a response, and `exitStatus`.
-  - `run.ts`: `runCommand`, the edge, which reads `--urls-from`, sends one line and reads one, waiting at most `RESPONSE_DEADLINE_MS`; `main.ts` is the entry point.
+  - `run.ts`: `runCommand`, the edge, which reads `--urls-from`, sends one line and reads one, waiting at most `RESPONSE_DEADLINE_MS`, and hands `install` and `uninstall` to `install.ts`; `main.ts` is the entry point.
   - `version.ts`: the version, read from `package.json`.
-- `test/host/`, `test/command/`: their tests. `processes.ts` runs a host with real framing on its pipes, a client on its socket, and the command; `launch-host.ts` is the test-only launcher that calls the host's `run` with a parent lookup that answers Google Chrome's path, and `entry-point.test.ts` sees the real entry point refuse; `claim.test.ts` runs every interleaving of two hosts' claims on a model of the file system; `bundle.test.ts` runs the bundled programs.
+  - `layout.json` and `layout.ts`: where each file lies in the package and where a user's two links go, `packageRootOf`, the package's root from the command's real path, and `hostManifest`, the host's manifest.
+  - `install-plan.ts`: `places`, the two links' paths from the environment, and `planInstall` and `planUninstall`, pure functions from what is at each path to the ordered steps (make a folder, link, replace or keep a link, remove one, or refuse or leave a path that holds anything else).
+  - `install.ts`: `runSetup`, the edge of `install` and `uninstall`, which looks at the disk and carries out the steps through `Files`, unless a step refuses or the run is a dry run; `nodeFiles` is the real file system.
+- `test/host/`, `test/command/`: their tests. `processes.ts` runs a host with real framing on its pipes, a client on its socket, and the command; `launch-host.ts` is the test-only launcher that calls the host's `run` with a parent lookup that answers Google Chrome's path, and `entry-point.test.ts` sees the real entry point refuse; `claim.test.ts` runs every interleaving of two hosts' claims on a model of the file system; `bundle.test.ts` runs the bundled programs; `install.test.ts` runs `install` and `uninstall` on an in-memory file system, and `install-process.test.ts` runs them as processes from a package `layOutPackage` lays out, with `HOME` in a temporary folder; `chrome-only.test.ts` fails when the install code or the module names another browser's folder; `readme.test.ts` holds `README.md`'s examples and exit statuses to the command.
+- `test/markdown.ts`: the fenced blocks and tables of a Markdown text, for the documentation tests.
 - `docs/protocol.md`: the protocol's reference for a client author. Each `json` example's info string names the message it shows (`request`, `response`, `host-message` or `extension-message`), and the tests check it with that message's parser.
+- `docs/checks-by-hand.md`: the behaviours only a real Chrome shows, each as a step and its expected result.
 - `skills-devshell/`: the sub-flake that installs this repository's skills into `.agents/skills/`.
 - `.agents/skills/*.preferences.md`: this repository's preferences for those skills.
 
@@ -76,6 +85,6 @@ Enter the dev shell with `nix develop`; it puts Node on the `PATH`, and `menu` l
 - `npm test`: runs the tests.
 - `npm run typecheck`: type-checks each of the TypeScript projects with `tsc -p`.
 - `npm run build`: writes the unpacked extension to `dist/extension/`: `manifest.json`, the bundled service worker `service-worker.js`, the empty page `empty.html`, the status page `status.html` with its stylesheet `status.css`, and the options page `options.html`, each page with its bundled script of the same name; and the bundled command and host to `dist/programs/`.
-- `nix build`: builds the package, which installs the sources under `lib/node_modules/declarative-tab-groups/`, the unpacked extension under `share/declarative-tab-groups/extension/`, the command as `bin/declarative-tab-groups` and the host as `libexec/declarative-tab-groups-host`, both on the flake's Node.
+- `nix build`: builds the package, which installs the sources under `lib/node_modules/declarative-tab-groups/`, the unpacked extension under `share/declarative-tab-groups/extension/`, the host's manifest under `share/declarative-tab-groups/native-messaging-host/`, the command as `bin/declarative-tab-groups` and the host as `libexec/declarative-tab-groups-host`, both on the flake's Node.
 - `nix fmt`: formats the tree with treefmt: Nix with nixfmt, and Markdown, TypeScript, HTML and JSON with Prettier, `package-lock.json` excepted.
 - `nix flake check`: builds the package, and with it the extension and the programs, runs the installed programs, runs the type check and the tests on the dependencies `package-lock.json` pins, and fails on any file `nix fmt` would change.

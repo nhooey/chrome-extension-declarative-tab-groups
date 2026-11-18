@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { CommandValue } from "../../src/command/arguments.ts";
+import type { RequestCommand } from "../../src/command/arguments.ts";
 import {
   EXIT,
   exitStatus,
@@ -17,7 +17,7 @@ import {
   type StatusSuccess,
 } from "../../src/protocol/index.ts";
 
-const setCommand: CommandValue = {
+const setCommand: RequestCommand = {
   command: "set",
   group: "Reading",
   createWindow: false,
@@ -184,7 +184,11 @@ describe("output", () => {
   });
 
   it("renders get as one URL per line, and status as the versions", () => {
-    const get: CommandValue = { command: "get", group: "Reading", json: false };
+    const get: RequestCommand = {
+      command: "get",
+      group: "Reading",
+      json: false,
+    };
     assert.equal(
       output(get, line(getSuccess), "0.1.0").stdout,
       "https://example.com/\nfile:///tmp/notes.html\n",

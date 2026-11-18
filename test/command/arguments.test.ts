@@ -4,9 +4,11 @@ import { describe, it } from "node:test";
 import { parseArguments, usageText } from "../../src/command/arguments.ts";
 import {
   GET_HELP,
+  INSTALL_HELP,
   MAIN_HELP,
   SET_HELP,
   STATUS_HELP,
+  UNINSTALL_HELP,
 } from "../../src/command/help.ts";
 
 const usageError = (args: readonly string[]): string => {
@@ -168,6 +170,42 @@ describe("parseArguments: get and status", () => {
   });
 });
 
+describe("parseArguments: install and uninstall", () => {
+  it("parses each, with and without --dry-run", () => {
+    assert.deepEqual(parseArguments(["install"]), {
+      kind: "run",
+      command: { command: "install", dryRun: false },
+    });
+    assert.deepEqual(parseArguments(["uninstall", "--dry-run"]), {
+      kind: "run",
+      command: { command: "uninstall", dryRun: true },
+    });
+  });
+
+  it("prints each one's help", () => {
+    assert.deepEqual(parseArguments(["install", "--help"]), {
+      kind: "help",
+      text: INSTALL_HELP,
+    });
+    assert.deepEqual(parseArguments(["uninstall", "-h"]), {
+      kind: "help",
+      text: UNINSTALL_HELP,
+    });
+  });
+
+  it("reports each usage error", () => {
+    assert.equal(
+      usageError(["install", "/Applications"]),
+      'install takes no arguments, but was given "/Applications"',
+    );
+    assert.equal(usageError(["uninstall", "--json"]), "unknown option --json");
+    assert.equal(
+      usageError(["install", "--dry-run=yes"]),
+      "--dry-run takes no value",
+    );
+  });
+});
+
 describe("parseArguments: the command", () => {
   it("prints help for the command and each subcommand, before any other check", () => {
     assert.deepEqual(parseArguments(["--help"]), {
@@ -194,10 +232,13 @@ describe("parseArguments: the command", () => {
   });
 
   it("reports a missing or unknown command", () => {
-    assert.equal(usageError([]), "a command is needed: set, get or status");
+    assert.equal(
+      usageError([]),
+      "a command is needed: set, get, status, install or uninstall",
+    );
     assert.equal(
       usageError(["open"]),
-      'unknown command "open"; the commands are set, get and status',
+      'unknown command "open"; the commands are set, get, status, install and uninstall',
     );
     assert.equal(usageError(["--verbose"]), "unknown option --verbose");
     assert.equal(
@@ -218,13 +259,21 @@ describe("parseArguments: the command", () => {
   });
 
   it("gives every help its purpose, options, exit statuses and an example", () => {
-    [MAIN_HELP, SET_HELP, GET_HELP, STATUS_HELP].forEach((help) => {
+    const statuses = (help: string): readonly string[] =>
+      [...(help.split("\nExit statuses:\n")[1] ?? "").matchAll(/^ {2}(\d) /gm)]
+        .map((match) => match[1] ?? "")
+        .filter((status) => status !== "");
+    [
+      { help: MAIN_HELP, exits: ["0", "1", "2", "3", "4"] },
+      { help: SET_HELP, exits: ["0", "1", "2", "3", "4"] },
+      { help: GET_HELP, exits: ["0", "1", "2", "3", "4"] },
+      { help: STATUS_HELP, exits: ["0", "1", "2", "3", "4"] },
+      { help: INSTALL_HELP, exits: ["0", "1", "2"] },
+      { help: UNINSTALL_HELP, exits: ["0", "1", "2"] },
+    ].forEach(({ help, exits }) => {
       assert.match(help, /^declarative-tab-groups[ a-z]*: /);
       assert.match(help, /\nOptions:\n/);
-      assert.match(
-        help,
-        /\nExit statuses:\n {2}0 .*\n {2}1 .*\n {2}2 .*\n {2}3 .*\n {2}4 /,
-      );
+      assert.deepEqual(statuses(help), exits);
       assert.match(help, /\nExample:\n {2}/);
     });
   });

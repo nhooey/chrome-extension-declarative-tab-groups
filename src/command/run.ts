@@ -1,6 +1,7 @@
 // The command's edge: it reads `--urls-from`, sends one request line to the
 // host's socket, reads one response line, and prints. It connects once:
 // it never starts Chrome or any other program, and never retries.
+// `install` and `uninstall` go to their own edge, `install.ts`.
 
 import { readFile } from "node:fs/promises";
 import { createConnection } from "node:net";
@@ -11,7 +12,8 @@ import { MAX_FRAME_BYTES } from "../host/frame.ts";
 import { INITIAL_LINE_STATE, splitLines } from "../host/lines.ts";
 import { REQUEST_TIMEOUT_MS } from "../host/router.ts";
 import { type Environment, socketPath } from "../host/socket-path.ts";
-import { type CommandValue, parseArguments, usageText } from "./arguments.ts";
+import { parseArguments, type RequestCommand, usageText } from "./arguments.ts";
+import { runSetup, type SetupIo } from "./install.ts";
 import { PROGRAM } from "./help.ts";
 import {
   EXIT,
@@ -22,7 +24,7 @@ import {
 } from "./output.ts";
 import { VERSION } from "./version.ts";
 
-export type CommandIo = {
+export type CommandIo = SetupIo & {
   /** The arguments after the program's path. */
   readonly args: readonly string[];
   readonly env: Environment;
@@ -57,7 +59,7 @@ const messageOf = (error: unknown): string =>
 
 /** `set`'s URLs, from its arguments, its file or standard input. */
 const readUrls = async (
-  command: CommandValue,
+  command: RequestCommand,
   stdin: Readable,
 ): Promise<readonly string[]> => {
   if (command.command !== "set") {
@@ -152,6 +154,12 @@ export const runCommand = async (io: CommandIo): Promise<number> => {
       break;
   }
   const { command } = invocation;
+  if (command.command === "install" || command.command === "uninstall") {
+    const result = await runSetup(command, io);
+    await write(io.stdout, result.stdout);
+    await write(io.stderr, result.stderr);
+    return result.status;
+  }
   const subcommand = command.command;
   const urls = await readUrls(command, io.stdin).then(
     (value) => ({ ok: true as const, value }),

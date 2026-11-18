@@ -1,12 +1,15 @@
 // Who the extension is to Chrome and to its native host: the host's name,
 // which the service worker connects to, and the extension's ID, which the
-// host's manifest names in `allowed_origins`.
+// host's manifest names in `allowed_origins`. Both are kept in
+// `identity.json`, which the Home Manager module reads too.
+
+import identity from "./identity.json" with { type: "json" };
 
 /** The native-messaging host's name, as `chrome.runtime.connectNative` takes it. */
-export const NATIVE_HOST_NAME = "io.github.nhooey.declarative_tab_groups";
+export const NATIVE_HOST_NAME: string = identity.nativeHostName;
 
 /** The extension's ID, fixed by `key` in manifest.json; a test derives it from the key. */
-export const EXTENSION_ID = "hgooabdnifmafojdaabifdnombnflfii";
+export const EXTENSION_ID: string = identity.extensionId;
 
 /** One hexadecimal digit, 0 to 15, written as Chrome writes it in an ID: `a` to `p`. */
 const idDigit = (nibble: number): string => String.fromCharCode(0x61 + nibble);

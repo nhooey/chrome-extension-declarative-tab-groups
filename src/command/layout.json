@@ -1,0 +1,14 @@
+{
+  "package": {
+    "command": "lib/declarative-tab-groups/declarative-tab-groups.mjs",
+    "commandLink": "bin/declarative-tab-groups",
+    "host": "lib/declarative-tab-groups/declarative-tab-groups-host.mjs",
+    "hostLink": "libexec/declarative-tab-groups-host",
+    "extension": "share/declarative-tab-groups/extension",
+    "hostManifests": "share/declarative-tab-groups/native-messaging-host"
+  },
+  "home": {
+    "hostManifests": "Library/Application Support/Google/Chrome/NativeMessagingHosts",
+    "extension": "declarative-tab-groups/extension"
+  }
+}
