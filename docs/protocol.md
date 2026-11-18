@@ -77,6 +77,8 @@ The success response:
 | `unchecked`      | non-negative integer | How many tabs were closed without the unsubmitted-form check being able to run on them. |
 | `loading`        | non-negative integer | How many of the opened tabs were still loading when the response was sent.              |
 
+`opened` and `closed` count the pages of `urls` and the group's other pages, never the extension's own pages: the status page, or the page shown for an empty group.
+
 ```json response
 {
   "protocol": 1,
