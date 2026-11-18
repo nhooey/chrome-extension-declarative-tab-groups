@@ -1,0 +1,14 @@
+# Nix: build outputs, and the dev shell's state.
+/result
+/result-*
+/.direnv/
+
+# npm's dependencies, in any package.
+node_modules/
+
+# Project-scope skill installs from the dev shell's startup hook, symlinks
+# into the Nix store; the skills' preferences files beside them are the
+# project's own.
+/.agents/skills/*
+!/.agents/skills/*.preferences.md
+/.claude/skills/
