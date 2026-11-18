@@ -8,8 +8,16 @@ import {
   type Request,
   type Response,
   type SetRequest,
+  type SetSuccess,
 } from "../protocol/index.ts";
 import { plan } from "./plan.ts";
+import { planned, requestFinished, requestStarted } from "./progress.ts";
+import {
+  ignoreProgress,
+  type ProgressStorage,
+  progressReport,
+  type Report,
+} from "./progress-store.ts";
 import {
   groupsTitled,
   readGroupState,
@@ -18,13 +26,25 @@ import {
   tabUrl,
 } from "./read-state.ts";
 import { runPlan } from "./run-plan.ts";
+import {
+  readSettings,
+  type SettingsStorage,
+  statusPageWanted,
+} from "./settings.ts";
 import { type Edge, messageOf, within } from "./tab-strip.ts";
 
 /** The versions `status` reports. */
 export type Versions = { readonly extension: string; readonly chrome: string };
 
-/** What the commands act through: the edge, and a way to read the versions. */
-export type Services = Edge & { readonly versions: () => Promise<Versions> };
+/**
+ * What the commands act through: the edge, a way to read the versions,
+ * the stored settings, and where each group's progress is written.
+ */
+export type Services = Edge & {
+  readonly versions: () => Promise<Versions>;
+  readonly settings: SettingsStorage;
+  readonly progress: ProgressStorage;
+};
 
 const ambiguous = (count: number, title: string) =>
   failure(
@@ -56,18 +76,45 @@ const fileAccessFailure = async (
       );
 };
 
+const answerFault = (error: unknown): Failure =>
+  failure("internal", `the extension failed to answer: ${messageOf(error)}`);
+
+const applySet = async (
+  services: Services,
+  request: SetRequest,
+  report: Report,
+): Promise<SetSuccess | Failure> => {
+  try {
+    const refused = await fileAccessFailure(services, request);
+    if (refused !== null) {
+      return refused;
+    }
+    const { statusPage } = await readSettings(services.settings);
+    const state = await readGroupState(services, request.group, {
+      statusPage: statusPageWanted(request, statusPage),
+      report,
+    });
+    const result = plan(state, request);
+    if (!result.ok) {
+      return result.error;
+    }
+    report(planned(state, result.value));
+    return await runPlan(services, request.group, result.value, report);
+  } catch (error) {
+    return answerFault(error);
+  }
+};
+
+/** Sets the group, reporting each step of it to the group's status page. */
 const setGroup = async (
   services: Services,
   request: SetRequest,
+  report: Report,
 ): Promise<Response> => {
-  const refused = await fileAccessFailure(services, request);
-  if (refused !== null) {
-    return refused;
-  }
-  const planned = plan(await readGroupState(services, request.group), request);
-  return planned.ok
-    ? runPlan(services, request.group, planned.value)
-    : planned.error;
+  report(requestStarted(request, services.clock.now()));
+  const response = await applySet(services, request, report);
+  report(requestFinished(response, services.clock.now()));
+  return response;
 };
 
 const getGroup = async (
@@ -100,11 +147,12 @@ const getGroup = async (
 const answer = async (
   services: Services,
   request: Request,
+  report: Report,
 ): Promise<Response> => {
   try {
     switch (request.command) {
       case "set":
-        return await setGroup(services, request);
+        return await setGroup(services, request, report);
       case "get":
         return await getGroup(services, request);
       case "status":
@@ -116,10 +164,7 @@ const answer = async (
         };
     }
   } catch (error) {
-    return failure(
-      "internal",
-      `the extension failed to answer: ${messageOf(error)}`,
-    );
+    return answerFault(error);
   }
 };
 
@@ -127,23 +172,35 @@ const answer = async (
  * The response to one request, or `internal` once `REQUEST_DEADLINE_MS`
  * has passed without one. A request still running then is given up through
  * its edge's signal: it makes no Chrome call after the one under way
- * returns, so it cannot act on its group alongside the next request.
+ * returns, so it cannot act on its group alongside the next request. A
+ * `set` answered so reports that failure as its end, which stops its
+ * report, so the group's status page shows the failure and the request's
+ * later steps write nothing.
  */
 export const handleRequest = async (
   services: Services,
   request: Request,
 ): Promise<Response> => {
   const deadline = new AbortController();
+  const report =
+    request.command === "set"
+      ? progressReport(services.progress, request.group)
+      : ignoreProgress;
+  const timedOut = failure(
+    "internal",
+    `the extension did not answer within ${REQUEST_DEADLINE_MS / 1000} seconds`,
+  );
   try {
-    return await within(
+    const response = await within(
       services.clock,
       REQUEST_DEADLINE_MS,
-      answer({ ...services, signal: deadline.signal }, request),
-      failure(
-        "internal",
-        `the extension did not answer within ${REQUEST_DEADLINE_MS / 1000} seconds`,
-      ),
+      answer({ ...services, signal: deadline.signal }, request, report),
+      timedOut,
     );
+    if (response === timedOut) {
+      report(requestFinished(timedOut, services.clock.now()));
+    }
+    return response;
   } finally {
     deadline.abort(
       new Error(

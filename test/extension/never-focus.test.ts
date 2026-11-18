@@ -1,9 +1,11 @@
-// The extension never focuses a window or activates a tab. The narrowed
-// interface is the guarantee, so its operations are pinned here: adding
-// one, such as `windows.update`, fails the first test. The rest check that
-// `narrowTabStrip` passes Chrome only the interface's operations and named
-// fields, that no other module names Chrome, and that every tab and window
-// the commands create opens inactive and unfocused.
+// The extension never focuses a window, and makes no tab active but its
+// status page. The narrowed interface is the guarantee, so its operations
+// are pinned here: adding one, such as `windows.update`, fails the first
+// test, and `tabs.update` can pass only `{ active: true }`. The rest check
+// that `narrowTabStrip` passes Chrome only the interface's operations and
+// named fields, that no module but the edges names Chrome, and that every
+// tab and window the commands create opens inactive and unfocused;
+// status-page.test.ts checks when the status page is made active.
 
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
@@ -26,11 +28,12 @@ import {
   type Fake,
   fakeChrome,
   servicesOf,
+  STATUS_PAGE,
   tab,
   world,
 } from "./fake-chrome.ts";
 
-/** Every operation of the narrowed interface; none can focus. */
+/** Every operation of the narrowed interface; none can focus a window. */
 const OPERATIONS = [
   "tabs.query",
   "tabs.get",
@@ -38,6 +41,7 @@ const OPERATIONS = [
   "tabs.group",
   "tabs.move",
   "tabs.remove",
+  "tabs.update",
   "tabGroups.query",
   "tabGroups.update",
   "windows.getAll",
@@ -47,8 +51,16 @@ const OPERATIONS = [
   "extension.isAllowedFileSchemeAccess",
 ];
 
-/** The only source files that may name the `chrome` global. */
-const CHROME_EDGES = ["src/extension/background.ts"];
+/**
+ * The only source files that may name the `chrome` global: the service
+ * worker's entry point, and the two pages that read and write
+ * `chrome.storage`.
+ */
+const CHROME_EDGES = [
+  "src/extension/background.ts",
+  "src/extension/options.ts",
+  "src/extension/status.ts",
+];
 
 const operationNames = (api: object): readonly string[] =>
   Object.entries(api).flatMap(([namespace, members]) =>
@@ -75,7 +87,10 @@ const shape = (value: unknown): unknown =>
 
 /** Every shape of arguments Chrome may receive, by operation. */
 const ARGUMENTS: { readonly [operation: string]: readonly unknown[] } = {
-  "tabs.query": [[{ groupId: "number" }]],
+  "tabs.query": [
+    [{ groupId: "number" }],
+    [{ active: "boolean", windowId: "number" }],
+  ],
   "tabs.get": [["number"]],
   "tabs.create": [
     [{ active: "boolean", url: "string", windowId: "number" }],
@@ -87,6 +102,7 @@ const ARGUMENTS: { readonly [operation: string]: readonly unknown[] } = {
   ],
   "tabs.move": [["number", { index: "number" }]],
   "tabs.remove": [["array"]],
+  "tabs.update": [["number", { active: "boolean" }]],
   "tabGroups.query": [[{}]],
   "tabGroups.update": [
     ["number", { collapsed: "boolean" }],
@@ -183,6 +199,12 @@ const callEvery = async (api: TabStrip): Promise<void> => {
   const moved = { index: 0, windowId: 2 };
   await api.tabs.move(1, moved);
   await api.tabs.remove([1]);
+  const activated = {
+    active: true as const,
+    highlighted: true,
+    url: "https://b.example/",
+  };
+  await api.tabs.update(1, activated);
   await api.tabGroups.query({});
   const updated = { collapsed: true, ...extra };
   await api.tabGroups.update(1, updated);
@@ -207,17 +229,21 @@ const callEvery = async (api: TabStrip): Promise<void> => {
 };
 
 describe("the narrowed tab strip", () => {
-  it("lists exactly these operations, none of which can focus", () => {
+  // Fails to type-check when `tabs.update` takes anything but `{ active: true }`.
+  type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+  const onlyActivates: Same<
+    Parameters<TabStrip["tabs"]["update"]>,
+    [tabId: number, properties: { active: true }]
+  > = true;
+
+  it("lists exactly these operations, none of which can focus a window", () => {
     const { chrome } = recordingChrome();
     assert.deepEqual(operationNames(narrowTabStrip(chrome)), OPERATIONS);
     assert.deepEqual(operationNames(fakeChrome(world()).tabStrip), OPERATIONS);
-    for (const focusing of [
-      "windows.update",
-      "tabs.update",
-      "tabs.highlight",
-    ]) {
+    for (const focusing of ["windows.update", "tabs.highlight"]) {
       assert.equal(OPERATIONS.includes(focusing), false);
     }
+    assert.ok(onlyActivates);
   });
 
   it("reaches nothing of Chrome but its own operations and named fields", async () => {
@@ -270,7 +296,7 @@ describe("the narrowed tab strip", () => {
         }).code,
       ),
     );
-    assert.deepEqual(naming, CHROME_EDGES);
+    assert.deepEqual(naming.toSorted(), CHROME_EDGES);
   });
 });
 
@@ -325,12 +351,18 @@ describe("set never focuses", () => {
       );
     }
     assertArguments(fake.calls());
-    // The new window's first tab, its only one, was the one active tab, and
-    // the second request closed it.
+    // Chrome makes a new window's only tab its active tab: here the status
+    // page, which no later request closes, so nothing is activated.
     assert.deepEqual(
-      fake.world().tabs.filter((each) => each.active),
-      [],
-      "no tab the extension opened is active",
+      fake
+        .world()
+        .tabs.filter((each) => each.active)
+        .map((each) => each.url),
+      [`${STATUS_PAGE}?group=Reading`],
+    );
+    assert.equal(
+      fake.calls().some((call) => call.operation === "tabs.update"),
+      false,
     );
   });
 

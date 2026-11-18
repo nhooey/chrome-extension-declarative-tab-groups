@@ -14,8 +14,13 @@
     "tabGroups",
     "scripting",
     "nativeMessaging",
-    "alarms"
+    "alarms",
+    "storage"
   ],
   "host_permissions": ["<all_urls>"],
-  "incognito": "not_allowed"
+  "incognito": "not_allowed",
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": false
+  }
 }

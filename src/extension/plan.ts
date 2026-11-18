@@ -139,6 +139,23 @@ const planExistingGroup = (
       : group.tabs[0]?.id !== status.id
         ? [{ kind: "move-first", tabId: status.id }]
         : [];
+  // The one activation: the status page takes the place of the window's
+  // active tab when this plan closes it, where Chrome would otherwise make
+  // a neighbour active. With the status page off nothing is activated, and
+  // Chrome picks the next active tab itself.
+  const replaced = statusPage
+    ? closing.find((tab) => tab.id === group.activeTabId)
+    : undefined;
+  const activate: readonly Step[] =
+    replaced === undefined
+      ? []
+      : [
+          {
+            kind: "activate-status-page",
+            tabId: status?.id ?? null,
+            replacing: replaced.id,
+          },
+        ];
   const opens = appended.map(openAtEnd);
   const closed = leaving.filter((tab) => tab.kind === "other");
   return {
@@ -148,6 +165,7 @@ const planExistingGroup = (
         ? [{ kind: "set-color", color: request.color } as const]
         : []),
       ...placeStatus,
+      ...activate,
       ...(closing.length > 0
         ? [{ kind: "close", tabIds: closing.map((tab) => tab.id) } as const]
         : []),

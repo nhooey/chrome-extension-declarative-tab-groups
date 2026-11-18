@@ -1,7 +1,9 @@
 // The extension's service worker, as manifest.json names it once bundled:
 // it hands Chrome to `startServiceWorker`, the tab strip through
-// `narrowTabStrip` only. Every listener is added in the worker's first
-// turn, as Chrome requires to wake it for an event.
+// `narrowTabStrip` only, and the local and session storage areas through
+// the two calls each the settings and the progress use. Every listener is
+// added in the worker's first turn, as Chrome requires to wake it for an
+// event.
 
 import { type Brand, chromeVersion } from "./browser.ts";
 import { startServiceWorker } from "./service-worker.ts";
@@ -45,7 +47,18 @@ startServiceWorker({
           });
         }),
     },
-    pages: { empty: chrome.runtime.getURL("empty.html") },
+    pages: {
+      empty: chrome.runtime.getURL("empty.html"),
+      status: chrome.runtime.getURL("status.html"),
+    },
+    settings: {
+      get: (defaults) => chrome.storage.local.get(defaults),
+      set: (items) => chrome.storage.local.set(items),
+    },
+    progress: {
+      get: (key) => chrome.storage.session.get(key),
+      set: (items) => chrome.storage.session.set(items),
+    },
     versions: async () => ({
       extension: chrome.runtime.getManifest().version,
       chrome: chromeVersion(

@@ -163,6 +163,56 @@ describe("plan over generated states", () => {
     }
   });
 
+  it("closes every page of the extension's naming another group", () => {
+    const withStray = planned.filter(({ c }) =>
+      (matchingGroups(c)[0]?.tabs ?? []).some((tab) => tab.kind === "stray"),
+    );
+    assert.ok(withStray.length > 100, `${withStray.length} cases`);
+    for (const { c, run } of withStray) {
+      const strays = (matchingGroups(c)[0]?.tabs ?? [])
+        .filter((tab) => tab.kind === "stray")
+        .map((tab) => existingKey(tab.id));
+      assert.deepEqual(
+        run.closed.map((tab) => tab.key).filter((key) => strays.includes(key)),
+        strays,
+        label(c),
+      );
+    }
+  });
+
+  it("activates the status page exactly when the window's active tab closes, before any close", () => {
+    let activated = 0;
+    for (const { c, plan: p, run } of planned) {
+      const group = matchingGroups(c)[0];
+      const active = group?.activeTabId ?? null;
+      const activeCloses =
+        active !== null &&
+        run.closed.some((tab) => tab.key === existingKey(active));
+      const kinds = p.steps.map((step) => step.kind);
+      const at = kinds.indexOf("activate-status-page");
+      assert.equal(
+        kinds.filter((kind) => kind === "activate-status-page").length,
+        c.state.statusPage && activeCloses ? 1 : 0,
+        label(c),
+      );
+      if (at !== -1) {
+        activated += 1;
+        const firstClose = kinds.indexOf("close");
+        assert.ok(firstClose === -1 || at < firstClose, label(c));
+        assert.deepEqual(
+          p.steps[at],
+          {
+            kind: "activate-status-page",
+            tabId: group?.tabs.find((tab) => tab.kind === "status")?.id ?? null,
+            replacing: active,
+          },
+          label(c),
+        );
+      }
+    }
+    assert.ok(activated > 100, "the generator rarely closes the active tab");
+  });
+
   it("opens every URL in order, even one a tab already shows", () => {
     let shown = 0;
     for (const { c, run } of planned) {

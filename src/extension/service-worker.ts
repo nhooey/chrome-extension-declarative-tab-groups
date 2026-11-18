@@ -2,6 +2,8 @@
 // events, and the transition's effects become Chrome calls. The port, the
 // connection's state and the per-group queue live here, in the closure of
 // `startServiceWorker`, and nowhere else. `background.ts` hands it Chrome.
+// Before it handles a request, it ends each request a stopped worker left
+// under way in the stored progress, which outlives the worker.
 
 import {
   failure,
@@ -22,8 +24,12 @@ import {
   transition,
 } from "./connection.ts";
 import { NATIVE_HOST_NAME } from "./identity.ts";
+import { endInterrupted } from "./progress-store.ts";
 import { MAX_WAITING, queueByKey } from "./queue.ts";
-import { messageOf } from "./tab-strip.ts";
+import { messageOf, within } from "./tab-strip.ts";
+
+/** How long the worker waits, at its start, to end the requests a stopped worker left under way. */
+export const RECOVERY_TIMEOUT_MS = 5_000;
 
 type Listen<T extends unknown[]> = {
   readonly addListener: (listener: (...args: T) => void) => void;
@@ -79,6 +85,17 @@ export const startServiceWorker = (runtime: WorkerRuntime): boolean => {
   let state: ConnectionState = INITIAL_STATE;
   let port: NativePort | null = null;
   const enqueue = queueByKey();
+  const { clock, progress } = runtime.services;
+  // A request a stopped worker left under way is ended first, so no
+  // request's progress is written over; a storage that has not answered
+  // within `RECOVERY_TIMEOUT_MS` holds up no request.
+  const recovery = new AbortController();
+  const recovered = within(
+    clock,
+    RECOVERY_TIMEOUT_MS,
+    endInterrupted(progress, clock.now(), recovery.signal),
+    undefined,
+  ).finally(() => recovery.abort());
 
   const answer = (to: NativePort | null, envelope: RequestEnvelope): void => {
     const respond = () => handleRequest(runtime.services, envelope.request);
@@ -88,9 +105,9 @@ export const startServiceWorker = (runtime: WorkerRuntime): boolean => {
         "busy",
         `${MAX_WAITING} requests already wait for the group ${JSON.stringify(key)}`,
       );
-    void (key === null ? respond() : enqueue(key, respond, full)).then(
-      (response) => post(to, { id: envelope.id, response }),
-    );
+    void recovered
+      .then(() => (key === null ? respond() : enqueue(key, respond, full)))
+      .then((response) => post(to, { id: envelope.id, response }));
   };
 
   const connect = (): void => {

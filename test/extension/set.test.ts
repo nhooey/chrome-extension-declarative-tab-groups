@@ -1,5 +1,7 @@
 // `set` end to end: the request read against a fake Chrome, planned and
-// carried out, checked on both the fake's final tabs and the response.
+// carried out, checked on both the fake's final tabs and the response. The
+// status page is off here, as the user's setting can make it, so that the
+// group holds only the requested pages; status-page.test.ts has it on.
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -36,6 +38,9 @@ const A = "https://a.example/";
 const B = "https://b.example/";
 const C = "https://c.example/";
 const FILE = "FILE:///tmp/notes.html";
+
+/** The user's setting with the status page off. */
+const OFF = { statusPage: false };
 
 const set = (
   urls: readonly string[],
@@ -76,7 +81,10 @@ const run = async (
   options: FakeOptions = {},
 ): Promise<{ readonly fake: Fake; readonly response: Response }> => {
   const fake = fakeChrome(start, options);
-  return { fake, response: await handleRequest(servicesOf(fake), request) };
+  return {
+    fake,
+    response: await handleRequest(servicesOf(fake, OFF), request),
+  };
 };
 
 const urls = (fake: Fake, title = "Reading"): readonly string[] =>
@@ -137,7 +145,7 @@ describe("set: an existing group", () => {
     const { fake, response } = await run(withReading([2, 3]), set([]));
     assert.deepEqual(response, success({ opened: 0, closed: 2 }));
     assert.deepEqual(urls(fake), [`${EMPTY_PAGE}?group=Reading`]);
-    const again = await handleRequest(servicesOf(fake), set([]));
+    const again = await handleRequest(servicesOf(fake, OFF), set([]));
     assert.deepEqual(again, success({ opened: 0, closed: 0 }));
     assert.deepEqual(urls(fake), [`${EMPTY_PAGE}?group=Reading`]);
   });

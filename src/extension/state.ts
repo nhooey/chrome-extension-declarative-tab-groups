@@ -8,15 +8,17 @@ export type OwnPage = "status" | "empty";
 
 /**
  * A tab of a group. The caller tells the extension's own pages from the
- * rest; the planner never looks at a URL to decide it. Only the other pages
- * carry the result of the unsubmitted-form check.
+ * rest; the planner never looks at a URL to decide it. An own page is the
+ * group's only when it names the group; one naming another group, or
+ * none, is `stray`, and always closes. Only the other pages carry the
+ * result of the unsubmitted-form check.
  */
 export type GroupTab =
   | {
       readonly id: number;
       readonly url: string;
       readonly title: string;
-      readonly kind: OwnPage;
+      readonly kind: OwnPage | "stray";
     }
   | {
       readonly id: number;
@@ -34,6 +36,8 @@ export type Group = {
   readonly windowId: number;
   /** The group's tabs, in tab-strip order. */
   readonly tabs: readonly GroupTab[];
+  /** The id of its window's active tab, in the group or not; null when unknown. */
+  readonly activeTabId: number | null;
 };
 
 export type GroupState = {

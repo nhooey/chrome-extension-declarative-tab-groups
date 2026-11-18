@@ -6,11 +6,17 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import type { Brand } from "../../src/extension/browser.ts";
+import type { Services } from "../../src/extension/commands.ts";
 import {
   RECONNECT_ALARM,
   RECONNECT_PERIOD_MINUTES,
 } from "../../src/extension/connection.ts";
 import { NATIVE_HOST_NAME } from "../../src/extension/identity.ts";
+import { advance, idle, requestStarted } from "../../src/extension/progress.ts";
+import {
+  INTERRUPTED,
+  progressKey,
+} from "../../src/extension/progress-store.ts";
 import {
   type NativePort,
   startServiceWorker,
@@ -18,7 +24,14 @@ import {
 } from "../../src/extension/service-worker.ts";
 import type { ResponseEnvelope } from "../../src/protocol/index.ts";
 import { BRANDS } from "./brands.ts";
-import { fakeChrome, servicesOf, world } from "./fake-chrome.ts";
+import {
+  fakeChrome,
+  fakeSession,
+  servicesOf,
+  settled,
+  tab,
+  world,
+} from "./fake-chrome.ts";
 
 type FakePort = NativePort & {
   readonly posted: ResponseEnvelope[];
@@ -56,7 +69,10 @@ type Recorder = {
   readonly fire: (event: "startup" | "installed" | "alarm") => void;
 };
 
-const fakeRuntime = (brands: readonly Brand[] | undefined): Recorder => {
+const fakeRuntime = (
+  brands: readonly Brand[] | undefined,
+  services: Services = servicesOf(fakeChrome(world())),
+): Recorder => {
   const ports: FakePort[] = [];
   const alarms: string[] = [];
   const listeners: string[] = [];
@@ -101,7 +117,7 @@ const fakeRuntime = (brands: readonly Brand[] | undefined): Recorder => {
         },
       },
       log: () => undefined,
-      services: servicesOf(fakeChrome(world())),
+      services,
     },
   };
 };
@@ -212,5 +228,90 @@ describe("the service worker in Google Chrome", () => {
       `create ${RECONNECT_ALARM}`,
       `clear ${RECONNECT_ALARM}`,
     ]);
+  });
+});
+
+/** Turns of the event loop until the port has posted `count` responses, at most 200. */
+const answered = async (port: FakePort, count: number): Promise<void> => {
+  for (let turn = 0; turn < 200 && port.posted.length < count; turn += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+};
+
+describe("the service worker's start, after a stopped worker", () => {
+  const reading = world({
+    windows: [{ id: 1, type: "normal", focused: true, tabIds: [1, 2] }],
+    tabs: [tab(1, 1), tab(2, 1, { groupId: 50 })],
+    groups: [
+      {
+        id: 50,
+        windowId: 1,
+        title: "Reading",
+        color: "blue",
+        collapsed: false,
+      },
+    ],
+    lastFocused: 1,
+  });
+  const underWay = advance(
+    idle("Reading"),
+    requestStarted(
+      {
+        protocol: 1,
+        command: "set",
+        group: "Reading",
+        urls: ["https://a.example/"],
+      },
+      10,
+    ),
+  );
+
+  it("ends the request it left under way before handling any", async () => {
+    // A slow read, so a request not held back would be written first.
+    const session = fakeSession({
+      items: { [progressKey("Reading")]: underWay },
+      slowReadAll: 50,
+    });
+    const recorder = fakeRuntime(
+      BRANDS.chrome,
+      servicesOf(fakeChrome(reading), { session }),
+    );
+    startServiceWorker(recorder.runtime);
+    const [port] = recorder.ports;
+    assert.ok(port !== undefined);
+    port.receive({ hello: { protocol: 1 } });
+    port.receive({
+      id: "1",
+      request: {
+        protocol: 1,
+        command: "set",
+        group: "Reading",
+        urls: ["https://b.example/"],
+      },
+    });
+    await answered(port, 1);
+    await settled();
+    assert.equal(port.posted[0]?.response.ok, true);
+    const [first, ...rest] = session.writes();
+    assert.equal(first?.key, progressKey("Reading"));
+    assert.equal(first?.value.current, null);
+    assert.deepEqual(first?.value.log?.outcome, INTERRUPTED);
+    assert.deepEqual(rest[0]?.value.current?.urls, ["https://b.example/"]);
+    assert.equal(rest.at(-1)?.value.log?.outcome?.ok, true);
+  });
+
+  it("answers requests while the storage never answers", async () => {
+    const session = fakeSession({ hang: "both" });
+    const recorder = fakeRuntime(
+      BRANDS.chrome,
+      servicesOf(fakeChrome(reading), { session }),
+    );
+    startServiceWorker(recorder.runtime);
+    const [port] = recorder.ports;
+    assert.ok(port !== undefined);
+    port.receive({ hello: { protocol: 1 } });
+    port.receive({ id: "1", request: { protocol: 1, command: "status" } });
+    await answered(port, 1);
+    assert.equal(port.posted[0]?.response.ok, true);
   });
 });

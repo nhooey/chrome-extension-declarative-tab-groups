@@ -1,6 +1,8 @@
 // Carries out a plan's steps, in order, through the narrowed tab strip, and
 // answers the `set` request with what they did. Every Chrome call that
-// fails becomes a failure response; nothing throws out of `runPlan`.
+// fails becomes a failure response; nothing throws out of `runPlan`. Each
+// close, open and load is reported as it starts and ends, for the status
+// page.
 
 import { fail, succeed } from "../protocol/check.ts";
 import {
@@ -10,7 +12,9 @@ import {
   type SetSuccess,
 } from "../protocol/index.ts";
 import type { Plan } from "./plan.ts";
-import { tabsOf } from "./read-state.ts";
+import type { ProgressEvent } from "./progress.ts";
+import { ignoreProgress, type Report } from "./progress-store.ts";
+import { activeTabOf, groupTabKind, tabsOf, tabUrl } from "./read-state.ts";
 import type { NewTab, Step } from "./steps.ts";
 import { type Edge, isAbandoned, messageOf } from "./tab-strip.ts";
 
@@ -28,13 +32,15 @@ export const isDragRefusal = (message: string): boolean =>
   message.startsWith(DRAG_REFUSAL);
 
 /** What the steps carried out so far have made. */
-type Progress = {
+type Made = {
   readonly groupId: number | null;
   readonly windowId: number | null;
   /** The ids of the tabs opened so far, by `newTabKey`. */
   readonly opened: { readonly [key: string]: number };
   readonly loading: number;
 };
+
+const STATUS_TAB: NewTab = { role: "status" };
 
 const newTabKey = (tab: NewTab): string =>
   tab.role === "url" ? `url ${tab.index}` : tab.role;
@@ -46,17 +52,11 @@ const ABANDONED = internal(
   "the request passed its deadline, so its run stopped",
 );
 
-/** The URL a new tab opens; the empty page names its group in its query. */
-const urlOf = (edge: Edge, title: string, tab: NewTab): Result<string> => {
-  switch (tab.role) {
-    case "url":
-      return succeed(tab.url);
-    case "empty":
-      return succeed(`${edge.pages.empty}?group=${encodeURIComponent(title)}`);
-    case "status":
-      return fail(internal("this extension has no status page"));
-  }
-};
+/** The URL a new tab opens; the extension's own pages name their group in their query. */
+const urlOf = (edge: Edge, title: string, tab: NewTab): string =>
+  tab.role === "url"
+    ? tab.url
+    : `${edge.pages[tab.role]}?group=${encodeURIComponent(title)}`;
 
 /**
  * Calls Chrome, trying a change it refuses while a tab is dragged again
@@ -91,8 +91,8 @@ const attempt = async <T>(
   }
 };
 
-const openedId = (progress: Progress, tab: NewTab): Result<number> => {
-  const id = progress.opened[newTabKey(tab)];
+const openedId = (made: Made, tab: NewTab): Result<number> => {
+  const id = made.opened[newTabKey(tab)];
   return id === undefined
     ? fail(
         internal(`the plan names a tab it has not opened: ${newTabKey(tab)}`),
@@ -105,16 +105,12 @@ const known = (value: number | null, what: string): Result<number> =>
     ? fail(internal(`the plan acts on a ${what} it has not made`))
     : succeed(value);
 
-const withOpened = (
-  progress: Progress,
-  tab: NewTab,
-  tabId: number,
-): Progress => ({
-  ...progress,
-  opened: { ...progress.opened, [newTabKey(tab)]: tabId },
+const withOpened = (made: Made, tab: NewTab, tabId: number): Made => ({
+  ...made,
+  opened: { ...made.opened, [newTabKey(tab)]: tabId },
 });
 
-/** How many of the tabs are still loading; a tab that is gone is not. */
+/** The tabs still loading; a tab that is gone is not. */
 const stillLoading = async (
   edge: Edge,
   tabIds: readonly number[],
@@ -131,20 +127,38 @@ const stillLoading = async (
   return tabIds.filter((_, index) => loading[index] === true);
 };
 
+/** An opened page being waited for: its tab, and its place in `urls`. */
+type Loading = { readonly tabId: number; readonly index: number };
+
+/** Waits for the pages to load, reporting each as it does; answers how many are still loading at the deadline. */
 const waitForLoad = async (
   edge: Edge,
-  tabIds: readonly number[],
+  report: Report,
+  pages: readonly Loading[],
   deadline: number,
 ): Promise<number> => {
   if (isAbandoned(edge)) {
-    return tabIds.length;
+    return pages.length;
   }
-  const loading = await stillLoading(edge, tabIds);
-  if (loading.length === 0 || edge.clock.now() >= deadline) {
-    return loading.length;
+  const loading = await stillLoading(
+    edge,
+    pages.map((page) => page.tabId),
+  );
+  const rest = pages.filter((page) => loading.includes(page.tabId));
+  pages
+    .filter((page) => !rest.includes(page))
+    .forEach((page) => report({ kind: "loaded", index: page.index }));
+  if (rest.length === 0) {
+    return 0;
+  }
+  if (edge.clock.now() >= deadline) {
+    rest.forEach((page) =>
+      report({ kind: "load-timed-out", index: page.index }),
+    );
+    return rest.length;
   }
   await edge.clock.sleep(Math.min(LOAD_POLL_MS, deadline - edge.clock.now()));
-  return waitForLoad(edge, loading, deadline);
+  return waitForLoad(edge, report, rest, deadline);
 };
 
 /** The group's first and last tabs, which every open or move places by. */
@@ -215,22 +229,59 @@ const closeEach = async (
   return closeEach(edge, call, rest);
 };
 
+/**
+ * Makes the status page its window's active tab, only while the tab it
+ * replaces is still the active one, and only when the tab is still this
+ * group's status page, in the plan's window and group. It is best-effort:
+ * when it cannot, Chrome picks the next active tab itself once the
+ * replaced tab closes, and the request goes on. Once the request is given
+ * up, it calls nothing.
+ */
+const activateStatusPage = async (
+  edge: Edge,
+  title: string,
+  made: Made,
+  tabId: number | null,
+  replacing: number,
+): Promise<void> => {
+  const statusId = tabId ?? made.opened[newTabKey(STATUS_TAB)];
+  const { windowId, groupId } = made;
+  if (statusId === undefined || windowId === null || isAbandoned(edge)) {
+    return;
+  }
+  try {
+    if ((await activeTabOf(edge.tabStrip, windowId)) !== replacing) {
+      return;
+    }
+    if (isAbandoned(edge)) return;
+    const page = await edge.tabStrip.tabs.get(statusId);
+    const ours =
+      page.windowId === windowId &&
+      page.groupId === groupId &&
+      groupTabKind(tabUrl(page), edge.pages, title) === "status";
+    if (ours && !isAbandoned(edge)) {
+      await edge.tabStrip.tabs.update(statusId, { active: true });
+    }
+  } catch {
+    // Chrome makes another tab active when the replaced one closes.
+  }
+};
+
 const runStep = async (
   edge: Edge,
   title: string,
+  report: Report,
   step: Step,
-  progress: Progress,
-): Promise<Result<Progress>> => {
+  made: Made,
+): Promise<Result<Made>> => {
   const started = edge.clock.now();
   const call = <T>(f: () => Promise<T>): Promise<Result<T>> =>
     attempt(edge, started, f);
   switch (step.kind) {
     case "create-window": {
-      const url = urlOf(edge, title, step.tab);
-      if (!url.ok) return url;
       const created = await call(() =>
         edge.tabStrip.windows.create({
-          url: url.value,
+          url: urlOf(edge, title, step.tab),
           focused: false,
           type: "normal",
         }),
@@ -240,15 +291,13 @@ const runStep = async (
       const tabId = created.value?.tabs?.[0]?.id;
       return windowId === undefined || tabId === undefined
         ? fail(internal("Chrome made a window without a tab"))
-        : succeed(withOpened({ ...progress, windowId }, step.tab, tabId));
+        : succeed(withOpened({ ...made, windowId }, step.tab, tabId));
     }
     case "open-in-window": {
-      const url = urlOf(edge, title, step.tab);
-      if (!url.ok) return url;
       const created = await call(() =>
         edge.tabStrip.tabs.create({
           windowId: step.windowId,
-          url: url.value,
+          url: urlOf(edge, title, step.tab),
           active: false,
         }),
       );
@@ -257,17 +306,13 @@ const runStep = async (
       return tabId === undefined
         ? fail(internal("Chrome made a tab without an id"))
         : succeed(
-            withOpened(
-              { ...progress, windowId: step.windowId },
-              step.tab,
-              tabId,
-            ),
+            withOpened({ ...made, windowId: step.windowId }, step.tab, tabId),
           );
     }
     case "create-group": {
-      const tabId = openedId(progress, step.tab);
+      const tabId = openedId(made, step.tab);
       if (!tabId.ok) return tabId;
-      const windowId = known(progress.windowId, "window");
+      const windowId = known(made.windowId, "window");
       if (!windowId.ok) return windowId;
       const groupId = await call(() =>
         edge.tabStrip.tabs.group({
@@ -283,23 +328,21 @@ const runStep = async (
         }),
       );
       return updated.ok
-        ? succeed({ ...progress, groupId: groupId.value })
+        ? succeed({ ...made, groupId: groupId.value })
         : updated;
     }
     case "open-in-group": {
-      const groupId = known(progress.groupId, "group");
+      const groupId = known(made.groupId, "group");
       if (!groupId.ok) return groupId;
-      const windowId = known(progress.windowId, "window");
+      const windowId = known(made.windowId, "window");
       if (!windowId.ok) return windowId;
-      const url = urlOf(edge, title, step.tab);
-      if (!url.ok) return url;
       // Opened at the window's end and then placed by a fresh read of the
       // group, so a tab another program or the user adds meanwhile cannot
       // put it out of order.
       const created = await call(() =>
         edge.tabStrip.tabs.create({
           windowId: windowId.value,
-          url: url.value,
+          url: urlOf(edge, title, step.tab),
           active: false,
         }),
       );
@@ -316,12 +359,10 @@ const runStep = async (
         step.at,
         PLACE_TRIES,
       );
-      return placed.ok
-        ? succeed(withOpened(progress, step.tab, tabId))
-        : placed;
+      return placed.ok ? succeed(withOpened(made, step.tab, tabId)) : placed;
     }
     case "move-first": {
-      const groupId = known(progress.groupId, "group");
+      const groupId = known(made.groupId, "group");
       if (!groupId.ok) return groupId;
       const placed = await placeInGroup(
         edge,
@@ -331,23 +372,26 @@ const runStep = async (
         "start",
         PLACE_TRIES,
       );
-      return placed.ok ? succeed(progress) : placed;
+      return placed.ok ? succeed(made) : placed;
     }
+    case "activate-status-page":
+      await activateStatusPage(edge, title, made, step.tabId, step.replacing);
+      return succeed(made);
     case "close": {
       const closed = await call(() =>
         edge.tabStrip.tabs.remove([...step.tabIds]),
       );
       if (closed.ok || closed.error.error.code === "busy") {
-        return closed.ok ? succeed(progress) : closed;
+        return closed.ok ? succeed(made) : closed;
       }
       // Chrome refuses the whole list when one of its tabs has gone, after
       // closing some of the rest; what still exists closes one by one.
       const each = await closeEach(edge, call, step.tabIds);
-      return each.ok ? succeed(progress) : each;
+      return each.ok ? succeed(made) : each;
     }
     case "set-color":
     case "collapse": {
-      const groupId = known(progress.groupId, "group");
+      const groupId = known(made.groupId, "group");
       if (!groupId.ok) return groupId;
       const updated = await call(() =>
         edge.tabStrip.tabGroups.update(
@@ -357,40 +401,86 @@ const runStep = async (
             : { color: step.color },
         ),
       );
-      return updated.ok ? succeed(progress) : updated;
+      return updated.ok ? succeed(made) : updated;
     }
     case "wait-for-load": {
-      const tabIds = step.tabs.map((tab) => openedId(progress, tab));
-      const missing = tabIds.find((tabId) => !tabId.ok);
+      const pages = step.tabs.map((tab): Result<Loading> => {
+        if (tab.role !== "url") {
+          return fail(internal(`the plan waits for the ${tab.role} page`));
+        }
+        const tabId = openedId(made, tab);
+        return tabId.ok
+          ? succeed({ tabId: tabId.value, index: tab.index })
+          : tabId;
+      });
+      const missing = pages.find((page) => !page.ok);
       if (missing !== undefined && !missing.ok) return missing;
+      const waiting = pages.flatMap((page) => (page.ok ? [page.value] : []));
+      report({
+        kind: "load-wait-started",
+        indexes: waiting.map((page) => page.index),
+      });
       const loading = await waitForLoad(
         edge,
-        tabIds.flatMap((tabId) => (tabId.ok ? [tabId.value] : [])),
+        report,
+        waiting,
         started + step.timeoutMs,
       );
-      return succeed({ ...progress, loading });
+      return succeed({ ...made, loading });
     }
   }
+};
+
+/** The index in `urls` of the page a step opens, if it opens one. */
+const openedIndex = (step: Step): number | null =>
+  (step.kind === "create-window" ||
+    step.kind === "open-in-window" ||
+    step.kind === "open-in-group") &&
+  step.tab.role === "url"
+    ? step.tab.index
+    : null;
+
+/** What is reported as a step starts, and as it ends well. */
+const stepEvents = (
+  step: Step,
+): readonly [ProgressEvent | null, ProgressEvent | null] => {
+  const index = openedIndex(step);
+  return step.kind === "close"
+    ? [
+        { kind: "close-started", tabIds: step.tabIds },
+        { kind: "closed", tabIds: step.tabIds },
+      ]
+    : index !== null
+      ? [
+          { kind: "open-started", index },
+          { kind: "opened", index },
+        ]
+      : [null, null];
 };
 
 const runSteps = async (
   edge: Edge,
   title: string,
+  report: Report,
   steps: readonly Step[],
-  progress: Progress,
-): Promise<Result<Progress>> => {
+  made: Made,
+): Promise<Result<Made>> => {
   const [step, ...rest] = steps;
   if (step === undefined) {
-    return succeed(progress);
+    return succeed(made);
   }
   if (isAbandoned(edge)) {
     return fail(ABANDONED);
   }
-  const next = await runStep(edge, title, step, progress);
-  return next.ok ? runSteps(edge, title, rest, next.value) : next;
+  const [starting, ending] = stepEvents(step);
+  if (starting !== null) report(starting);
+  const next = await runStep(edge, title, report, step, made);
+  if (!next.ok) return next;
+  if (ending !== null) report(ending);
+  return runSteps(edge, title, report, rest, next.value);
 };
 
-const start = (plan: Plan): Progress => {
+const start = (plan: Plan): Made => {
   const base = { opened: {}, loading: 0 };
   switch (plan.group.kind) {
     case "existing":
@@ -412,14 +502,16 @@ const start = (plan: Plan): Progress => {
  * change for `DRAG_RETRY_MS`, else `internal`. The steps before a failure
  * stay done. Once `edge.signal` aborts, the run stops at its next step,
  * retry or poll, making no Chrome call after the one under way returns.
+ * `report` is told as each close, open and load starts and ends.
  */
 export const runPlan = async (
   edge: Edge,
   title: string,
   plan: Plan,
+  report: Report = ignoreProgress,
 ): Promise<SetSuccess | Failure> => {
   try {
-    const done = await runSteps(edge, title, plan.steps, start(plan));
+    const done = await runSteps(edge, title, report, plan.steps, start(plan));
     if (!done.ok) {
       return done.error;
     }

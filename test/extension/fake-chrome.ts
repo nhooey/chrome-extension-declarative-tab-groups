@@ -11,15 +11,22 @@
 //   group expands when a tab joins it;
 // - `tabs.remove` is not atomic: it closes the tabs that exist, then
 //   refuses the call when one of them did not;
+// - a window has one active tab: activating a tab deactivates the rest,
+//   and when the active tab closes its right-hand neighbour, else its
+//   left-hand one, becomes active;
 // - while "dragging", every change to the tab strip is refused with
 //   Chrome's message.
 //
 // The clock's time passes only while every task is waiting on it: a
 // sleep resolves once no other work is left, earliest first, so a Chrome
 // call that answers at once always beats a timeout racing it.
+//
+// Beside it, fake storage areas for the settings and the progress.
 
 import type { Color } from "../../src/protocol/index.ts";
 import type { Services } from "../../src/extension/commands.ts";
+import type { Progress } from "../../src/extension/progress.ts";
+import type { ProgressStorage } from "../../src/extension/progress-store.ts";
 import type { FrameResult } from "../../src/extension/form-check.ts";
 import { EXTENSION_ID } from "../../src/extension/identity.ts";
 import {
@@ -188,6 +195,31 @@ const pruneGroups = (w: World): World => ({
     w.tabs.some((each) => each.groupId === group.id),
   ),
 });
+
+/**
+ * After tabs close, each window whose active tab closed makes the nearest
+ * surviving tab to its right active, else the nearest to its left.
+ */
+const activateSuccessors = (before: World, after: World): World => {
+  const successors = before.windows.flatMap((window) => {
+    const strip = window.tabIds;
+    const active = strip.findIndex((id) => tabOf(before, id).active);
+    const survives = (id: number) => after.tabs.some((each) => each.id === id);
+    if (active === -1 || survives(strip[active] ?? -1)) {
+      return [];
+    }
+    const next =
+      strip.slice(active + 1).find(survives) ??
+      strip.slice(0, active).findLast(survives);
+    return next === undefined ? [] : [next];
+  });
+  return {
+    ...after,
+    tabs: after.tabs.map((each) =>
+      successors.includes(each.id) ? { ...each, active: true } : each,
+    ),
+  };
+};
 
 /** The group of both neighbours of the tab at `index`, if they share one. */
 const enclosingGroup = (w: World, strip: readonly number[], index: number) => {
@@ -365,21 +397,27 @@ export const fakeChrome = (start: World, options: FakeOptions = {}): Fake => {
   });
 
   const removeTabs = (w: World, tabIds: readonly number[]): World =>
-    pruneGroups({
-      ...w,
-      tabs: w.tabs.filter((each) => !tabIds.includes(each.id)),
-      windows: w.windows.map((each) => ({
-        ...each,
-        tabIds: each.tabIds.filter((id) => !tabIds.includes(id)),
-      })),
-    });
+    pruneGroups(
+      activateSuccessors(w, {
+        ...w,
+        tabs: w.tabs.filter((each) => !tabIds.includes(each.id)),
+        windows: w.windows.map((each) => ({
+          ...each,
+          tabIds: each.tabIds.filter((id) => !tabIds.includes(id)),
+        })),
+      }),
+    );
 
   const tabStrip: ChromeTabStrip = {
     tabs: {
       query: (query) =>
         answer("tabs.query", [query], () =>
           state.tabs
-            .filter((each) => each.groupId === query.groupId)
+            .filter((each) =>
+              "groupId" in query
+                ? each.groupId === query.groupId
+                : each.windowId === query.windowId && each.active,
+            )
             .map((each) => view(state, each)),
         ),
       get: (tabId) =>
@@ -478,6 +516,21 @@ export const fakeChrome = (start: World, options: FakeOptions = {}): Fake => {
           }
           return [removeTabs(w, tabIds), undefined];
         }),
+      update: (tabId, properties) =>
+        change("tabs.update", [tabId, properties], (w) => {
+          const activated = tabOf(w, tabId);
+          return [
+            {
+              ...w,
+              tabs: w.tabs.map((each) =>
+                each.windowId === activated.windowId
+                  ? { ...each, active: each.id === tabId }
+                  : each,
+              ),
+            },
+            view(w, activated),
+          ];
+        }),
     },
     tabGroups: {
       query: (query) =>
@@ -572,12 +625,95 @@ export const fakeChrome = (start: World, options: FakeOptions = {}): Fake => {
 /** The empty page's URL, as `chrome.runtime.getURL` gives it. */
 export const EMPTY_PAGE = `chrome-extension://${EXTENSION_ID}/empty.html`;
 
+/** The status page's URL, as `chrome.runtime.getURL` gives it. */
+export const STATUS_PAGE = `chrome-extension://${EXTENSION_ID}/status.html`;
+
+/** An in-memory `chrome.storage.session`, recording every write. */
+export type FakeSession = {
+  readonly storage: ProgressStorage;
+  readonly writes: () => readonly {
+    readonly key: string;
+    readonly value: Progress;
+  }[];
+};
+
+export type SessionOptions = {
+  /** What the storage holds at the start, as a stopped worker left it. */
+  readonly items?: { readonly [key: string]: unknown };
+  /** Which calls reject, or never answer; none when absent. */
+  readonly reject?: "get" | "set" | "both";
+  readonly hang?: "get" | "set" | "both";
+  /** How many microtask turns a read of every item takes; 0 when absent. */
+  readonly slowReadAll?: number;
+};
+
+/** Resolves after `turns` microtask turns, before any timer or I/O. */
+const later = (turns: number): Promise<void> =>
+  turns <= 0
+    ? Promise.resolve()
+    : Promise.resolve().then(() => later(turns - 1));
+
+export const fakeSession = (options: SessionOptions = {}): FakeSession => {
+  const items = new Map<string, unknown>(Object.entries(options.items ?? {}));
+  const writes: { readonly key: string; readonly value: Progress }[] = [];
+  const fault = (call: "get" | "set"): Promise<never> | null =>
+    options.hang === call || options.hang === "both"
+      ? new Promise(() => undefined)
+      : options.reject === call || options.reject === "both"
+        ? Promise.reject(new Error(`the session storage refused a ${call}`))
+        : null;
+  return {
+    storage: {
+      get: (key) =>
+        fault("get") ??
+        (key === null
+          ? later(options.slowReadAll ?? 0).then(() =>
+              Object.fromEntries(items),
+            )
+          : Promise.resolve(items.has(key) ? { [key]: items.get(key) } : {})),
+      set: (written) =>
+        fault("set") ??
+        (() => {
+          Object.entries(written).forEach(([key, value]) => {
+            items.set(key, value);
+            writes.push({ key, value });
+          });
+          return Promise.resolve();
+        })(),
+    },
+    writes: () => [...writes],
+  };
+};
+
+/** Lets every write a report has started land, as reports never wait on them. */
+export const settled = (): Promise<void> =>
+  new Promise((resolve) => setImmediate(resolve));
+
+export type ServiceOptions = {
+  /** The stored setting; absent when the user never changed it. */
+  readonly statusPage?: boolean;
+  readonly session?: FakeSession;
+};
+
 /** The commands' services over the fake, reached through `narrowTabStrip` as the worker reaches Chrome. */
-export const servicesOf = (fake: Fake): Services => ({
+export const servicesOf = (
+  fake: Fake,
+  options: ServiceOptions = {},
+): Services => ({
   tabStrip: narrowTabStrip(fake.tabStrip),
   clock: fake.clock,
-  pages: { empty: EMPTY_PAGE },
+  pages: { empty: EMPTY_PAGE, status: STATUS_PAGE },
   versions: () => Promise.resolve({ extension: "0.1.0", chrome: "142.0.1.2" }),
+  settings: {
+    get: (defaults) =>
+      Promise.resolve(
+        options.statusPage === undefined
+          ? defaults
+          : { ...defaults, statusPage: options.statusPage },
+      ),
+    set: () => Promise.reject(new Error("the commands never write a setting")),
+  },
+  progress: (options.session ?? fakeSession()).storage,
 });
 
 /** The tabs of the group titled `title`, in tab-strip order. */

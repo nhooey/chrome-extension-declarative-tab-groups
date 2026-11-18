@@ -16,6 +16,7 @@ import {
   fakeChrome,
   groupTabs,
   servicesOf,
+  STATUS_PAGE,
   tab,
   type World,
   world,
@@ -38,9 +39,10 @@ const set = (urls: readonly string[], group = "Reading"): Request => ({
 const never = (): never => assert.fail("the queue is not full");
 
 const reading: World = world({
-  windows: [{ id: 1, type: "normal", focused: true, tabIds: [1, 3, 2, 4] }],
+  windows: [{ id: 1, type: "normal", focused: true, tabIds: [1, 6, 3, 2, 4] }],
   tabs: [
     tab(1, 1),
+    tab(6, 1, { groupId: 50, url: `${STATUS_PAGE}?group=Reading` }),
     tab(2, 1, { groupId: 50 }),
     tab(3, 1, { groupId: 50 }),
     tab(4, 1, { groupId: 50, url: `${EMPTY_PAGE}?group=Reading` }),
@@ -80,7 +82,7 @@ describe("get", () => {
       ...reading,
       groups: [...reading.groups, { ...reading.groups[0]!, id: 51 }],
       tabs: [...reading.tabs, tab(5, 1, { groupId: 51 })],
-      windows: [{ ...reading.windows[0]!, tabIds: [1, 3, 2, 4, 5] }],
+      windows: [{ ...reading.windows[0]!, tabIds: [1, 6, 3, 2, 4, 5] }],
     };
     assert.deepEqual(
       await handleRequest(servicesOf(fakeChrome(twice)), get()),
@@ -166,7 +168,7 @@ describe("one request at a time per group", () => {
     assert.equal(second.ok && second.command === "set" && second.closed, 1);
     assert.deepEqual(
       groupTabs(fake.world(), "Reading").map((each) => each.url),
-      ["https://b.example/"],
+      [`${STATUS_PAGE}?group=Reading`, "https://b.example/"],
     );
   });
 
@@ -190,11 +192,11 @@ describe("one request at a time per group", () => {
     );
     assert.deepEqual(
       groupTabs(fake.world(), "Reading").map((each) => each.url),
-      ["https://a.example/"],
+      [`${STATUS_PAGE}?group=Reading`, "https://a.example/"],
     );
     assert.deepEqual(
       groupTabs(fake.world(), "Work").map((each) => each.url),
-      ["https://w.example/"],
+      [`${STATUS_PAGE}?group=Work`, "https://w.example/"],
     );
   });
 });
@@ -301,7 +303,7 @@ describe("a request that never finishes", () => {
     assert.equal(second.ok, true);
     assert.deepEqual(
       groupTabs(fake.world(), "Reading").map((each) => each.url),
-      ["https://b.example/"],
+      [`${STATUS_PAGE}?group=Reading`, "https://b.example/"],
     );
   });
 
@@ -311,7 +313,8 @@ describe("a request that never finishes", () => {
       stall: (operation) =>
         operation === "tabs.create" && (creates += 1) === 1 ? 100_000 : 0,
     });
-    const services = servicesOf(fake);
+    // Off, so the stalled first create opens the request's page.
+    const services = servicesOf(fake, { statusPage: false });
     const enqueue = queueByKey();
     const send = (request: Request): Promise<Response> =>
       enqueue(

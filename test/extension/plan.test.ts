@@ -42,6 +42,7 @@ const group = (
   collapsed: false,
   windowId: 7,
   tabs,
+  activeTabId: null,
   ...fields,
 });
 
@@ -394,12 +395,89 @@ describe("plan: rule 9, colour and collapse", () => {
   });
 });
 
+describe("plan: the status page takes a closing active tab's place", () => {
+  const on = { statusPage: true };
+
+  it("activates the status page it opens before closing the active tab", () => {
+    assert.deepEqual(
+      steps(
+        state([group([page(1), page(2)], { activeTabId: 2 })], on),
+        request([A]),
+      ),
+      [
+        { kind: "open-in-group", tab: { role: "status" }, at: "start" },
+        { kind: "activate-status-page", tabId: null, replacing: 2 },
+        { kind: "close", tabIds: [1, 2] },
+        { kind: "open-in-group", tab: url(0, A), at: "end" },
+        wait(url(0, A)),
+      ],
+    );
+  });
+
+  it("activates the status page the group has, after moving it first", () => {
+    assert.deepEqual(
+      steps(
+        state([group([page(1), own(2, "status")], { activeTabId: 1 })], on),
+        request([]),
+      ),
+      [
+        { kind: "move-first", tabId: 2 },
+        { kind: "activate-status-page", tabId: 2, replacing: 1 },
+        { kind: "close", tabIds: [1] },
+      ],
+    );
+  });
+
+  it("activates nothing when the active tab stays or is outside the group", () => {
+    for (const [tabs, activeTabId] of [
+      [[own(1, "status"), page(2, "unsubmitted"), page(3)], 2],
+      [[own(1, "status"), page(2)], 1],
+      [[own(1, "status"), page(2)], 99],
+      [[own(1, "status"), page(2)], null],
+    ] as const) {
+      const kinds = steps(
+        state([group(tabs, { activeTabId })], on),
+        request([A]),
+      ).map((step) => step.kind);
+      assert.equal(
+        kinds.includes("activate-status-page"),
+        false,
+        `${activeTabId}`,
+      );
+    }
+  });
+
+  it("activates nothing while the status page is off", () => {
+    const kinds = steps(
+      state([group([page(1), page(2)], { activeTabId: 2 })]),
+      request([A]),
+    ).map((step) => step.kind);
+    assert.equal(kinds.includes("activate-status-page"), false);
+  });
+
+  it("activates the kept status page in place of a closing duplicate", () => {
+    assert.deepEqual(
+      steps(
+        state(
+          [group([own(1, "status"), own(2, "status")], { activeTabId: 2 })],
+          on,
+        ),
+        request([]),
+      ),
+      [
+        { kind: "activate-status-page", tabId: 1, replacing: 2 },
+        { kind: "close", tabIds: [2] },
+      ],
+    );
+  });
+});
+
 describe("plan: rule 10, nothing can focus", () => {
   // Fails to type-check when a kind is added to Step but not STEP_KINDS.
   type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
   const listed: Same<Step["kind"], (typeof STEP_KINDS)[number]> = true;
 
-  it("has exactly these step kinds, none of which focuses", () => {
+  it("has exactly these step kinds; none focuses, one activates the status page", () => {
     assert.ok(listed);
     assert.deepEqual(STEP_KINDS, [
       "create-window",
@@ -407,6 +485,7 @@ describe("plan: rule 10, nothing can focus", () => {
       "create-group",
       "open-in-group",
       "move-first",
+      "activate-status-page",
       "close",
       "set-color",
       "collapse",
@@ -423,6 +502,7 @@ describe("plan: rule 10, nothing can focus", () => {
     "create-group": ["color", "kind", "tab", "title"],
     "open-in-group": ["at", "kind", "tab"],
     "move-first": ["kind", "tabId"],
+    "activate-status-page": ["kind", "replacing", "tabId"],
     close: ["kind", "tabIds"],
     "set-color": ["color", "kind"],
     collapse: ["kind"],

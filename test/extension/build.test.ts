@@ -1,5 +1,6 @@
 // The unpacked extension `npm run build` writes: every file the manifest
-// and the empty page name is there, and the empty page names its group.
+// and the extension's pages name is there, no page holds inline script,
+// and the empty page names its group.
 
 import assert from "node:assert/strict";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
@@ -24,21 +25,44 @@ describe("the unpacked extension", () => {
     await rm(parent, { recursive: true, force: true });
   });
 
-  it("holds the manifest, the service worker and the empty page", async () => {
+  it("holds the manifest, the service worker and the extension's pages", async () => {
     assert.deepEqual((await readdir(out)).toSorted(), [
       "empty.html",
       "empty.js",
       "manifest.json",
+      "options.html",
+      "options.js",
       "service-worker.js",
+      "status.css",
+      "status.html",
+      "status.js",
     ]);
     const manifest = JSON.parse(
       await readFile(join(out, "manifest.json"), "utf8"),
     );
     assert.equal(manifest.background.service_worker, "service-worker.js");
-    assert.match(
-      await readFile(join(out, "empty.html"), "utf8"),
-      /<script src="empty\.js" defer><\/script>/,
+    assert.equal(manifest.options_ui.page, "options.html");
+    for (const name of ["empty", "status", "options"]) {
+      assert.ok(
+        (await readFile(join(out, `${name}.html`), "utf8")).includes(
+          `<script src="${name}.js" defer></script>`,
+        ),
+        name,
+      );
+    }
+    assert.ok(
+      (await readFile(join(out, "status.html"), "utf8")).includes(
+        '<link rel="stylesheet" href="status.css" />',
+      ),
     );
+  });
+
+  it("puts no inline script on the extension's pages", async () => {
+    for (const name of ["empty", "status", "options"]) {
+      const page = await readFile(join(out, `${name}.html`), "utf8");
+      assert.equal(page.split("<script").length - 1, 1, name);
+      assert.ok(!page.includes("<script>"), name);
+    }
   });
 
   it("bundles the service worker into one file", async () => {

@@ -31,6 +31,7 @@ describe("manifest.json", () => {
       "scripting",
       "nativeMessaging",
       "alarms",
+      "storage",
     ]);
     assert.deepEqual(manifest["host_permissions"], ["<all_urls>"]);
   });
@@ -39,10 +40,14 @@ describe("manifest.json", () => {
     assert.equal(manifest["incognito"], "not_allowed");
   });
 
-  it("runs a module service worker, and no content script or popup", () => {
+  it("runs a module service worker and an options page, and no content script or popup", () => {
     assert.deepEqual(manifest["background"], {
       service_worker: "service-worker.js",
       type: "module",
+    });
+    assert.deepEqual(manifest["options_ui"], {
+      page: "options.html",
+      open_in_tab: false,
     });
     assert.deepEqual(Object.keys(manifest).toSorted(), [
       "background",
@@ -53,6 +58,7 @@ describe("manifest.json", () => {
       "manifest_version",
       "minimum_chrome_version",
       "name",
+      "options_ui",
       "permissions",
       "version",
     ]);

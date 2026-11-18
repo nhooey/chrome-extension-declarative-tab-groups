@@ -95,17 +95,42 @@ export const generate = (seed: number, statusPage: boolean): Case => {
             title: "Empty",
             kind: "empty",
           }
-        : { id, url, title: `Page ${id}`, kind: "other", form: r.pick(FORMS) };
+        : roll < 3
+          ? {
+              id,
+              url: "chrome-extension://x/status.html?group=Elsewhere",
+              title: "Status",
+              kind: "stray",
+            }
+          : {
+              id,
+              url,
+              title: `Page ${id}`,
+              kind: "other",
+              form: r.pick(FORMS),
+            };
   };
 
-  const group = (title: string): Group => ({
-    id: nextId++,
-    title,
-    color: r.pick(COLORS),
-    collapsed: r.chance(0.3),
-    windowId: 100 + r.below(3),
-    tabs: Array.from({ length: 1 + r.below(7) }, tab),
-  });
+  // The window's active tab: one of the group's tabs half the time, else a
+  // tab outside the group, or none known.
+  const activeTab = (tabs: readonly GroupTab[]): number | null => {
+    const roll = r.below(10);
+    return roll < 5 ? r.pick(tabs).id : roll < 8 ? 9_000 + r.below(10) : null;
+  };
+
+  const group = (title: string): Group => {
+    const id = nextId++;
+    const tabs = Array.from({ length: 1 + r.below(7) }, tab);
+    return {
+      id,
+      title,
+      color: r.pick(COLORS),
+      collapsed: r.chance(0.3),
+      windowId: 100 + r.below(3),
+      tabs,
+      activeTabId: activeTab(tabs),
+    };
+  };
 
   const matching = r.pick([0, 1, 1, 1, 1, 1, 2]);
   const groups = [

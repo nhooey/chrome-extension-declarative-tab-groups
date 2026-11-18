@@ -1,6 +1,7 @@
 // A model of one tab group that applies a plan's steps, so that the tests
 // can check every state the group passes through. A step the model cannot
-// apply, such as one naming a tab that is not there, throws.
+// apply, such as one naming a tab that is not there, or activating a
+// status page that is not in the group, throws.
 
 import type { Color, SetRequest } from "../../src/protocol/index.ts";
 import type { FormState } from "../../src/extension/form-check.ts";
@@ -10,7 +11,7 @@ import type { NewTab, Step } from "../../src/extension/steps.ts";
 /** A tab of the model: an existing tab by its id, or a new one by its role. */
 export type ModelTab = {
   readonly key: string;
-  readonly kind: "status" | "empty" | "other";
+  readonly kind: "status" | "empty" | "stray" | "other";
   readonly form?: FormState;
 };
 
@@ -106,6 +107,15 @@ const apply = (model: Model, step: Step): Model => {
             ...model,
             tabs: [moved, ...model.tabs.filter((tab) => tab !== moved)],
           };
+    }
+    case "activate-status-page": {
+      const key =
+        step.tabId === null
+          ? newKey({ role: "status" })
+          : existingKey(step.tabId);
+      return model.tabs.some((tab) => tab.key === key && tab.kind === "status")
+        ? model
+        : failStep(step, "the status page is not in the group");
     }
     case "close": {
       const keys = step.tabIds.map(existingKey);

@@ -1,7 +1,8 @@
 // The steps a plan is made of: plain data that the extension carries out
-// in order. No step focuses or raises a window or makes a tab active: every
-// tab opens inactive and a created window opens unfocused, and no kind
-// exists that could do otherwise.
+// in order. No step focuses or raises a window: every tab opens inactive
+// and a created window opens unfocused, and no kind exists that could do
+// otherwise. One kind makes a tab active, and only the status page, in
+// place of a tab the plan closes while it is its window's active tab.
 
 import type { Color } from "../protocol/index.ts";
 
@@ -22,6 +23,7 @@ export const STEP_KINDS = [
   "create-group",
   "open-in-group",
   "move-first",
+  "activate-status-page",
   "close",
   "set-color",
   "collapse",
@@ -57,6 +59,17 @@ export type Step =
     }
   /** Moves an existing tab of the group to the group's first place. */
   | { readonly kind: "move-first"; readonly tabId: number }
+  /**
+   * Makes the group's status page its window's active tab, in place of
+   * `replacing`, the window's active tab, which a later step closes; it
+   * does nothing when `replacing` is no longer the active tab by then.
+   * `tabId` is the status page's id, or null for the one this plan opens.
+   */
+  | {
+      readonly kind: "activate-status-page";
+      readonly tabId: number | null;
+      readonly replacing: number;
+    }
   /** Closes existing tabs of the group. */
   | { readonly kind: "close"; readonly tabIds: readonly number[] }
   | { readonly kind: "set-color"; readonly color: Color }

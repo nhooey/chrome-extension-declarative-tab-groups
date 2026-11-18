@@ -1,6 +1,8 @@
 // Writes the unpacked extension into one folder: manifest.json, the
-// bundled service worker, the empty page and its script. `npm run build`
-// writes it to dist/extension/; a test builds it into a folder of its own.
+// bundled service worker, and the empty page, the status page with its
+// stylesheet and the options page, each with its bundled script. `npm run
+// build` writes it to dist/extension/; a test builds it into a folder of
+// its own.
 
 import { copyFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -12,12 +14,20 @@ const source = (name: string): string =>
   fileURLToPath(new URL(`../src/extension/${name}`, import.meta.url));
 
 /** The files copied as they are. */
-const STATIC_FILES = ["manifest.json", "empty.html"] as const;
+const STATIC_FILES = [
+  "manifest.json",
+  "empty.html",
+  "status.html",
+  "status.css",
+  "options.html",
+] as const;
 
 /** Each bundle's name in the output folder, and its entry point. */
 const BUNDLES = {
   "service-worker": "background.ts",
   empty: "empty.ts",
+  status: "status.ts",
+  options: "options.ts",
 } as const;
 
 /** The oldest Chrome the bundles must run in: manifest.json's `minimum_chrome_version`. */

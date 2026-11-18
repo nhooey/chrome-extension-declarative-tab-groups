@@ -1,10 +1,12 @@
 // The one way the extension's code reaches Chrome's tabs, windows, groups
 // and scripts: `TabStrip`, a narrowed interface naming exactly the Chrome
 // operations the extension needs, with Chrome's names and shapes. None of
-// them can focus: it has no `windows.update`, `tabs.update` or
-// `tabs.highlight`, `tabs.create` takes only `active: false`, and
-// `windows.create` only `focused: false`. The service worker hands Chrome
-// itself to `narrowTabStrip`, which type-checks Chrome against the
+// them can focus a window: it has no `windows.update` or `tabs.highlight`,
+// `tabs.create` takes only `active: false`, and `windows.create` only
+// `focused: false`. `tabs.update` takes only `{ active: true }`, which
+// makes a tab its window's active tab without focusing the window; the
+// extension calls it for its status page alone. The service worker hands
+// Chrome itself to `narrowTabStrip`, which type-checks Chrome against the
 // interface and keeps only these operations and their named fields.
 
 import type { Color } from "../protocol/index.ts";
@@ -44,9 +46,10 @@ type NormalWindows = { windowTypes: "normal"[] };
 
 export type TabStrip = {
   readonly tabs: {
-    readonly query: (query: {
-      groupId: number;
-    }) => Promise<readonly ChromeTab[]>;
+    /** The tabs of a group, or the active tab of a window. */
+    readonly query: (
+      query: { groupId: number } | { windowId: number; active: true },
+    ) => Promise<readonly ChromeTab[]>;
     readonly get: (tabId: number) => Promise<ChromeTab>;
     readonly create: (properties: {
       windowId: number;
@@ -64,6 +67,11 @@ export type TabStrip = {
       properties: { index: number },
     ) => Promise<unknown>;
     readonly remove: (tabIds: number[]) => Promise<void>;
+    /** Makes the tab its window's active tab; nothing else can be updated. */
+    readonly update: (
+      tabId: number,
+      properties: { active: true },
+    ) => Promise<unknown>;
   };
   readonly tabGroups: {
     readonly query: (
@@ -119,7 +127,12 @@ export type ChromeTabStrip = Omit<TabStrip, "scripting"> & {
  */
 export const narrowTabStrip = (source: ChromeTabStrip): TabStrip => ({
   tabs: {
-    query: (query) => source.tabs.query({ groupId: query.groupId }),
+    query: (query) =>
+      source.tabs.query(
+        "groupId" in query
+          ? { groupId: query.groupId }
+          : { windowId: query.windowId, active: true },
+      ),
     get: (tabId) => source.tabs.get(tabId),
     create: (properties) =>
       source.tabs.create({
@@ -142,6 +155,7 @@ export const narrowTabStrip = (source: ChromeTabStrip): TabStrip => ({
     move: (tabId, properties) =>
       source.tabs.move(tabId, { index: properties.index }),
     remove: (tabIds) => source.tabs.remove([...tabIds]),
+    update: (tabId) => source.tabs.update(tabId, { active: true }),
   },
   tabGroups: {
     query: () => source.tabGroups.query({}),
@@ -204,7 +218,10 @@ export const within = async <T>(
 };
 
 /** The URLs of the extension's own pages, from `chrome.runtime.getURL`. */
-export type ExtensionPages = { readonly empty: string };
+export type ExtensionPages = {
+  readonly empty: string;
+  readonly status: string;
+};
 
 /** What the extension's commands act through. */
 export type Edge = {
