@@ -7,7 +7,8 @@ A local program sets or reads a named Chrome tab group by sending JSON requests 
 - **Socket:** a Unix stream socket at `${XDG_STATE_HOME:-$HOME/.local/state}/declarative-tab-groups/host.sock`, in a folder only the user can enter. When `DECLARATIVE_TAB_GROUPS_SOCKET` is set, it names the socket's path instead.
 - **Framing:** UTF-8 text, one JSON object per line each way, each line ended by `\n`. An object that repeats a key counts the key's last value, as JavaScript's `JSON.parse` reads it.
 - **Order:** each request line is answered by one response line, on the same connection, in the order the requests were sent. A client may send several requests before reading the responses, and may keep the connection open for more. Requests on one group, from any clients, are carried out one at a time, in the order they arrive.
-- **Size:** a request line is at most 1,000,000 bytes, without its `\n`. That leaves room for the host's envelope under Chrome's cap of 1 MB (1,048,576 bytes) on a native message to the extension. A longer line is answered with `invalid-request`.
+- **Time:** the host answers every request within 120 seconds; a request the extension has not answered by then is answered with `internal`.
+- **Size:** a request line is at most 1,000,000 bytes, without its `\n`. That leaves room for the host's envelope under Chrome's cap of 1 MB (1,048,576 bytes) on a native message to the extension. A longer line is answered with `invalid-request`, after the responses to the requests before it, and the host then closes the connection.
 
 ## Versions
 
@@ -188,17 +189,17 @@ Any request can be answered with a failure instead of its success response:
 
 ### Error codes
 
-| Code                   | Meaning                                                                                                                                               |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `invalid-request`      | The request line is too long or is not one JSON object, or a field is unknown, missing, or of the wrong type or value.                                |
-| `unsupported-protocol` | The request's `protocol` is missing or is not the version the host speaks.                                                                            |
-| `ambiguous-group`      | More than one tab group has the requested title, so the request cannot tell which one is meant.                                                       |
-| `no-group`             | No tab group has the requested title.                                                                                                                 |
-| `no-window`            | `set` would create the group, no Chrome window can hold it, and `createWindow` is not `true`.                                                         |
-| `busy`                 | Chrome refused to change the tab strip for longer than the tool waits, as it does while the user is dragging a tab; the request can be sent again.    |
-| `not-connected`        | The host has no connection to the extension, such as when Chrome is not running; the command also reports it when no host is listening on the socket. |
-| `not-google-chrome`    | The browser running the extension is not Google Chrome, which this tool requires.                                                                     |
-| `internal`             | The tool hit a fault it did not expect, such as a malformed message between its own parts.                                                            |
+| Code                   | Meaning                                                                                                                                                                                   |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invalid-request`      | The request line is too long or is not one JSON object, or a field is unknown, missing, or of the wrong type or value.                                                                    |
+| `unsupported-protocol` | The request's `protocol` is missing or is not the version the host speaks.                                                                                                                |
+| `ambiguous-group`      | More than one tab group has the requested title, so the request cannot tell which one is meant.                                                                                           |
+| `no-group`             | No tab group has the requested title.                                                                                                                                                     |
+| `no-window`            | `set` would create the group, no Chrome window can hold it, and `createWindow` is not `true`.                                                                                             |
+| `busy`                 | Chrome refused to change the tab strip for longer than the tool waits, as it does while the user is dragging a tab; the request can be sent again.                                        |
+| `not-connected`        | The host has no connection to the extension, such as when Chrome is not running; the command also reports it when no host is listening on the socket, or none answers within 130 seconds. |
+| `not-google-chrome`    | The browser running the extension is not Google Chrome, which this tool requires.                                                                                                         |
+| `internal`             | The tool hit a fault it did not expect, such as a malformed message between its own parts, or the extension did not answer within 120 seconds.                                            |
 
 ## The native-messaging envelope
 

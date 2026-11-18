@@ -29,3 +29,37 @@ With it off, the group holds only the request's pages, a request closes a status
 Each page of the extension's own names its group. A request closes any that names another group, such as one opened before the group was renamed or dragged in from another group, and opens the group's own in its place. A request that never finished, because its deadline passed or the extension's service worker stopped, shows on the status page as failed.
 
 The status page is the only tab the extension ever makes active, and only when the window's active tab is one the request is about to close: the status page then takes its place, where Chrome would otherwise make a neighbouring tab active. Nothing is made active when the active tab is outside the group, is kept for its unsubmitted form, or is not being closed.
+
+## The host
+
+Google Chrome starts the native-messaging host, `libexec/declarative-tab-groups-host` in the package, when the extension connects to it, and the host relays requests between a Unix socket and the extension. It serves only when the browser that started it is stable Google Chrome, checked by its parent process's executable, and only for this tool's extension; any other browser that reads Chrome's native-messaging folder, Brave among them, gets a refusal. The socket is `$DECLARATIVE_TAB_GROUPS_SOCKET` when that is set, else `${XDG_STATE_HOME:-$HOME/.local/state}/declarative-tab-groups/host.sock`, in a folder only the user can enter. When several hosts start at once, as when more than one Chrome profile has the extension, at most one serves, and the others refuse.
+
+## Command
+
+`declarative-tab-groups` sends one request to the host's socket, waits at most 130 seconds for the response, and prints it; `--json` prints the response exactly as the host sent it, or, when no host answers, the `not-connected` failure the command makes in its place. It never starts Chrome and never retries. `declarative-tab-groups <command> --help` describes each command's options.
+
+- `set`: makes a group hold exactly the given pages, in order, given as arguments or one per line with `--urls-from <file>` (`-` for standard input):
+
+  ```sh
+  declarative-tab-groups set --group Reading --color blue https://example.com/ https://example.org/
+  ```
+
+- `get`: prints a group's pages, one URL per line:
+
+  ```sh
+  declarative-tab-groups get --group Reading
+  ```
+
+- `status`: prints the versions of the command, the extension and Google Chrome:
+
+  ```sh
+  declarative-tab-groups status
+  ```
+
+| Exit status | Meaning                                                                                                                        |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| 0           | Success.                                                                                                                       |
+| 1           | The request failed; `error.code` and `error.message` are on standard error.                                                    |
+| 2           | A usage error: a bad option, argument or URL, or an unusable socket path.                                                      |
+| 3           | `set` succeeded, but kept open tabs that hold an unsubmitted form.                                                             |
+| 4           | Not connected: no host listens on the socket, none answers within 130 seconds, or the host has no connection to the extension. |

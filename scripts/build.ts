@@ -2,7 +2,7 @@
 // bundled service worker, and the empty page, the status page with its
 // stylesheet and the options page, each with its bundled script. `npm run
 // build` writes it to dist/extension/; a test builds it into a folder of
-// its own.
+// its own. `buildPrograms` bundles the command and the host the same way.
 
 import { copyFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -52,6 +52,37 @@ export const buildExtension = async (outDir: string): Promise<void> => {
   );
 };
 
+/**
+ * The two Node programs, each bundled into one ES module with a `#!` line:
+ * Node strips no types from a package installed under `node_modules`.
+ */
+const PROGRAMS = {
+  "declarative-tab-groups": "../src/command/main.ts",
+  "declarative-tab-groups-host": "../src/host/main.ts",
+} as const;
+
+/** Writes the command and the host into one folder, as `<name>.mjs`. */
+export const buildPrograms = async (outDir: string): Promise<void> => {
+  await rm(outDir, { recursive: true, force: true });
+  await build({
+    entryPoints: Object.fromEntries(
+      Object.entries(PROGRAMS).map(([name, entry]) => [
+        name,
+        fileURLToPath(new URL(entry, import.meta.url)),
+      ]),
+    ),
+    outdir: outDir,
+    outExtension: { ".js": ".mjs" },
+    bundle: true,
+    format: "esm",
+    platform: "node",
+    target: "node26",
+    banner: { js: "#!/usr/bin/env node" },
+    logLevel: "warning",
+  });
+};
+
 if (import.meta.main) {
   await buildExtension(process.argv[2] ?? "dist/extension");
+  await buildPrograms(process.argv[3] ?? "dist/programs");
 }

@@ -6,12 +6,14 @@ A Google Chrome extension, a native-messaging host and a command, `declarative-t
 
 - `flake.nix`: the package, the dev shell, the formatter and the checks.
 - `nix/run-npm-script.sh`: the build command of the checks that run an npm script.
-- `package.json`, `package-lock.json`: the Node package, written in TypeScript that Node runs by stripping its types. Its dependencies are all for development: TypeScript, Node's and Chrome's types, and esbuild, which bundles the extension.
-- `tsconfig.base.json` and three projects that extend it, so each part is type-checked against only the APIs it may use:
+- `nix/check-programs.sh`: the build command of the `programs` check, which runs the installed command's `--help` and `--version` and sees the installed host refuse outside Google Chrome.
+- `package.json`, `package-lock.json`: the Node package, written in TypeScript that Node runs by stripping its types. Its dependencies are all for development: TypeScript, Node's and Chrome's types, and esbuild, which bundles the extension, the host and the command.
+- `tsconfig.base.json` and the projects that extend it, so each part is type-checked against only the APIs it may use:
   - `tsconfig.json`: the tests and `scripts/`, with Node's types.
   - `src/protocol/tsconfig.json`: the protocol module, with the Web APIs and neither Node's nor Chrome's.
   - `src/extension/tsconfig.json`: the extension, with the Web APIs and Chrome's types, and not Node's.
-- `scripts/build.ts`: `buildExtension`, which writes the unpacked extension into one folder.
+  - `src/host/tsconfig.json` and `src/command/tsconfig.json`: the host and the command, with Node's types.
+- `scripts/build.ts`: `buildExtension`, which writes the unpacked extension into one folder, and `buildPrograms`, which bundles the command and the host into one `.mjs` file each, with a `#!` line for Node.
 - `src/protocol/`: the protocol module the extension, the host and the command share. It is pure functional TypeScript, with no I/O and no Node or Chrome API, and `index.ts` exports all of it.
 - `test/protocol/`: its tests, under `node --test` with `node:test` and `node:assert/strict`; `docs.test.ts` parses every `json` example of `docs/protocol.md`.
 - `src/extension/`: the extension. Only the entry points, `background.ts`, `status.ts` and `options.ts`, name the `chrome` global; every other module takes Chrome as a parameter, so the tests run it against fakes.
@@ -39,9 +41,29 @@ A Google Chrome extension, a native-messaging host and a command, `declarative-t
   - `status.html`, `status.css` and `status.ts`: the status page, a group's first tab while it is on. Its script reads the progress of the group its `?group=` query names and draws it again on every `chrome.storage.onChanged`; its stylesheet holds all its motion, which `prefers-reduced-motion` turns off.
   - `options.html` and `options.ts`: the options page, one checkbox for the status-page setting.
 - `test/extension/`: their tests. `simulate.ts` applies a plan's steps to a model of the group and `generate.ts` makes seeded states and requests, for the properties `plan-properties.test.ts` checks; `form-check.test.ts` runs the form check from its source in a `node:vm` context whose global is a fake window; `fake-chrome.ts` is an in-memory Chrome behind `TabStrip` that records every call, with fake storage areas that can refuse or never answer, which the `set`, `get`, never-focus and status-page tests run against; `status-dom.test.ts` draws the status page into a fake document.
+- `src/host/`: the native-messaging host, which Chrome starts and which relays between its port and the Unix socket. Its logic is pure; `host.ts` and `main.ts` are the edges.
+  - `frame.ts`: `encodeFrame` and `decodeFrames`, Chrome's length-prefixed framing; a declared length over 64 MiB is an error.
+  - `lines.ts`: `splitLines` and `finishLines`, the socket's lines with a bound on a line's length; the command reads its response with them too.
+  - `socket-path.ts`: `socketPath`, the socket's path from the environment, which the command shares, and `folderProblem`, whether the socket's folder is only the user's.
+  - `guard.ts`: `isGoogleChromeExecutable`, true only for stable Google Chrome's executable path, and `isExtensionOrigin`.
+  - `router.ts`: `route`, a pure transition from the router's state and an event (a client's connection, data, end or close, a message from the extension, a timeout, the port closing) to its next state and effects. Each connection's responses go out in the order of its requests.
+  - `claim.ts`: `claimSocket` and `releaseSocket`, how one host of several started at once comes to serve the socket and lets go of it, through the steps of `SocketEdge`: each host makes a claim socket of its own beside the socket, serves only when no other claim answers, and closes the socket before its claim.
+  - `host.ts`: `run`, the edge, which checks the parent and the origin, claims and binds the socket, and carries out the router's effects; `processIo` gives it the process's streams.
+  - `main.ts`: the entry point, which finds the parent's executable with `/bin/ps`. There is no switch that skips its checks.
+- `src/command/`: the `declarative-tab-groups` command.
+  - `arguments.ts`: `parseArguments`, from the arguments to help, the version, a command value or a usage error.
+  - `help.ts`: the `--help` texts.
+  - `output.ts`: `requestFor`, `urlsFromText`, `output`, which renders a response, and `exitStatus`.
+  - `run.ts`: `runCommand`, the edge, which reads `--urls-from`, sends one line and reads one, waiting at most `RESPONSE_DEADLINE_MS`; `main.ts` is the entry point.
+  - `version.ts`: the version, read from `package.json`.
+- `test/host/`, `test/command/`: their tests. `processes.ts` runs a host with real framing on its pipes, a client on its socket, and the command; `launch-host.ts` is the test-only launcher that calls the host's `run` with a parent lookup that answers Google Chrome's path, and `entry-point.test.ts` sees the real entry point refuse; `claim.test.ts` runs every interleaving of two hosts' claims on a model of the file system; `bundle.test.ts` runs the bundled programs.
 - `docs/protocol.md`: the protocol's reference for a client author. Each `json` example's info string names the message it shows (`request`, `response`, `host-message` or `extension-message`), and the tests check it with that message's parser.
 - `skills-devshell/`: the sub-flake that installs this repository's skills into `.agents/skills/`.
 - `.agents/skills/*.preferences.md`: this repository's preferences for those skills.
+
+## Style
+
+The TypeScript is functional: pure functions over `readonly` values, with no classes, no enums, no `any`, and no change to anything a function is given; I/O stays in the edges named above. The one exception is a local accumulator: a function may fill an array it made, or move a cursor it declared, in a loop, where recursion would cost stack depth or spreading would copy over and over, as the frame and line splitters do with a chunk of many messages.
 
 ## The minimum Chrome version
 
@@ -52,8 +74,8 @@ A Google Chrome extension, a native-messaging host and a command, `declarative-t
 Enter the dev shell with `nix develop`; it puts Node on the `PATH`, and `menu` lists its commands. Run `npm ci` once to install the development dependencies.
 
 - `npm test`: runs the tests.
-- `npm run typecheck`: type-checks each of the three TypeScript projects with `tsc -p`.
-- `npm run build`: writes the unpacked extension to `dist/extension/`: `manifest.json`, the bundled service worker `service-worker.js`, the empty page `empty.html`, the status page `status.html` with its stylesheet `status.css`, and the options page `options.html`, each page with its bundled script of the same name.
-- `nix build`: builds the package, which installs the sources under `lib/node_modules/declarative-tab-groups/` and the unpacked extension under `share/declarative-tab-groups/extension/`.
+- `npm run typecheck`: type-checks each of the TypeScript projects with `tsc -p`.
+- `npm run build`: writes the unpacked extension to `dist/extension/`: `manifest.json`, the bundled service worker `service-worker.js`, the empty page `empty.html`, the status page `status.html` with its stylesheet `status.css`, and the options page `options.html`, each page with its bundled script of the same name; and the bundled command and host to `dist/programs/`.
+- `nix build`: builds the package, which installs the sources under `lib/node_modules/declarative-tab-groups/`, the unpacked extension under `share/declarative-tab-groups/extension/`, the command as `bin/declarative-tab-groups` and the host as `libexec/declarative-tab-groups-host`, both on the flake's Node.
 - `nix fmt`: formats the tree with treefmt: Nix with nixfmt, and Markdown, TypeScript, HTML and JSON with Prettier, `package-lock.json` excepted.
-- `nix flake check`: builds the package, and with it the extension, runs the type check and the tests on the dependencies `package-lock.json` pins, and fails on any file `nix fmt` would change.
+- `nix flake check`: builds the package, and with it the extension and the programs, runs the installed programs, runs the type check and the tests on the dependencies `package-lock.json` pins, and fails on any file `nix fmt` would change.

@@ -9,7 +9,7 @@
   "scripts": {
     "build": "node scripts/build.ts",
     "test": "node --test 'test/**/*.test.ts'",
-    "typecheck": "tsc -p tsconfig.json && tsc -p src/protocol/tsconfig.json && tsc -p src/extension/tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json && tsc -p src/protocol/tsconfig.json && tsc -p src/extension/tsconfig.json && tsc -p src/host/tsconfig.json && tsc -p src/command/tsconfig.json"
   },
   "devDependencies": {
     "@types/chrome": "^0.3.7",

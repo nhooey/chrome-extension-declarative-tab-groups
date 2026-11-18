@@ -61,9 +61,13 @@
           # The development dependencies as one node_modules, for the checks.
           nodeModules = pkgs.importNpmLock.buildNodeModules (npmLock // { inherit nodejs; });
 
-          # The package: its sources under lib/node_modules/, and the
-          # unpacked extension `npm run build` bundles under
-          # share/declarative-tab-groups/extension/; it has no executable.
+          # The package: its sources under lib/node_modules/, the unpacked
+          # extension `npm run build` bundles under
+          # share/declarative-tab-groups/extension/, and the bundled
+          # programs under lib/declarative-tab-groups/: the command linked
+          # from bin/, and the host from libexec/, off the PATH since only
+          # Chrome runs it. The fixup phase points their `#!` lines at this
+          # flake's Node.
           package = pkgs.buildNpmPackage {
             pname = packageJson.name;
             inherit (packageJson) version;
@@ -83,8 +87,17 @@
             postInstall = ''
               mkdir -p "$out/share/declarative-tab-groups"
               cp -R dist/extension "$out/share/declarative-tab-groups/extension"
+              install -D -m 0755 -t "$out/lib/declarative-tab-groups" dist/programs/*.mjs
+              mkdir -p "$out/bin" "$out/libexec"
+              ln -s ../lib/declarative-tab-groups/declarative-tab-groups.mjs "$out/bin/declarative-tab-groups"
+              ln -s ../lib/declarative-tab-groups/declarative-tab-groups-host.mjs "$out/libexec/declarative-tab-groups-host"
             '';
           };
+
+          # Runs the installed command and host on the flake's Node.
+          programs = pkgs.runCommand "declarative-tab-groups-programs" {
+            inherit package;
+          } (builtins.readFile ./nix/check-programs.sh);
 
           # Runs one of package.json's scripts on the sources, the tests and
           # the document the tests read, with the flake's node_modules.
@@ -112,7 +125,7 @@
           packages.default = package;
 
           checks = {
-            inherit package;
+            inherit package programs;
             typecheck = npmCheck "typecheck" "typecheck";
             tests = npmCheck "tests" "test";
           };
