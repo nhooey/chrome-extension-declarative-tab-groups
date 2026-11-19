@@ -6,6 +6,9 @@
 # npm's dependencies, in any package.
 node_modules/
 
+# The unpacked extension `npm run build` writes.
+/dist/
+
 # Project-scope skill installs from the dev shell's startup hook, symlinks
 # into the Nix store; the skills' preferences files beside them are the
 # project's own.

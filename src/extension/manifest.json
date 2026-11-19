@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Declarative Tab Groups",
+  "version": "0.1.0",
+  "description": "Lets local programs set the exact tabs of a named tab group, through a native host, without taking focus.",
+  "minimum_chrome_version": "126",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsqt1vbO29nqwUd+hGRFOD+MPVLSkAmV0nRSQRTWh6DXNNtH80U4aTtL+45x3QXsBmZkCUmQjfkZt78YJUbHExwQwFlOXFm/3/INGGwrhhamrFwVhrDLDrQCcbgmn7Woakx87iFdmqUcrlICSn9M4/Ip9O2H9RQ/9EZGIvCpqmONLxd32RRnS/Tvu+zGTvmtaKY3bRk95nOwFcNXBJn1WCvT6UxNLd5hk/g4UL7oHDrozluWpgY3PAHzbdob40ptazimI4rwq9KJBnm7RCfCvciB+ynvy8eBCPdoyGn0cBf9BsuZ9kYfOdYyCA40dAhdxu5+H8HashehnJd0nPeTrswIDAQAB",
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "permissions": [
+    "tabs",
+    "tabGroups",
+    "scripting",
+    "nativeMessaging",
+    "alarms",
+    "storage"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "incognito": "not_allowed",
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": false
+  }
+}

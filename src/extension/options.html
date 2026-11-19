@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Declarative Tab Groups options</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 1rem 1.25rem;
+        font:
+          14px/1.5 system-ui,
+          sans-serif;
+        background: Canvas;
+        color: CanvasText;
+      }
+      label {
+        display: flex;
+        gap: 0.6em;
+        align-items: baseline;
+      }
+      p {
+        margin: 0.4rem 0 0 1.9em;
+        max-width: 34rem;
+      }
+    </style>
+    <script src="options.js" defer></script>
+  </head>
+  <body>
+    <label>
+      <input id="status-page" type="checkbox" checked disabled />
+      Show a status page as each group's first tab
+    </label>
+    <p>
+      The status page shows what the extension is doing to its group as each
+      request runs, and the outcome of the latest one. A request's own
+      <code>statusPage</code> field overrides this setting.
+    </p>
+  </body>
+</html>

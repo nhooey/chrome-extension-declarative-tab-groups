@@ -1,0 +1,213 @@
+/* The status page. Its motion is CSS alone: a running line's mark spins, a
+   finished one draws its mark, and a new line slides in; a reader who asks
+   for reduced motion sees none of it. */
+
+:root {
+  color-scheme: light dark;
+  --muted: light-dark(#5f6368, #9aa0a6);
+  --running: light-dark(#1a73e8, #8ab4f8);
+  --done: light-dark(#188038, #81c995);
+  --kept: light-dark(#b06000, #fdd663);
+  --failed: light-dark(#c5221f, #f28b82);
+  --rule: light-dark(#dadce0, #3c4043);
+}
+
+body {
+  margin: 0;
+  font:
+    15px/1.5 system-ui,
+    sans-serif;
+  background: Canvas;
+  color: CanvasText;
+}
+
+main {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0 0 1.5rem;
+  font-size: 1.6rem;
+  overflow-wrap: anywhere;
+}
+
+.lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.lines .lines {
+  padding-left: 1.6rem;
+}
+
+#status > li {
+  padding: 1rem 0;
+  border-top: 1px solid var(--rule);
+}
+
+#status > li > .label {
+  font-weight: 600;
+}
+
+li {
+  animation: slide-in 220ms ease-out;
+}
+
+li > .label {
+  overflow-wrap: anywhere;
+}
+
+li > .time:not(:empty) {
+  margin-left: 0.5em;
+  color: var(--muted);
+  font-size: 0.85em;
+}
+
+li > .time:not(:empty)::before {
+  content: "· ";
+}
+
+.state {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The mark: a ring while waiting, a spinning ring while running, then a
+   drawn tick, dot, dash or cross. A line without a state has none. */
+.mark {
+  display: inline-block;
+  position: relative;
+  box-sizing: border-box;
+  width: 0.9em;
+  height: 0.9em;
+  margin-right: 0.55em;
+  vertical-align: -0.1em;
+  border-radius: 50%;
+}
+
+li:not([data-state]) > .mark {
+  display: none;
+}
+
+li[data-state="waiting"] > .mark {
+  border: 2px solid var(--muted);
+  opacity: 0.6;
+}
+
+li[data-state="running"] > .mark {
+  border: 2px solid var(--running);
+  border-top-color: transparent;
+  animation: spin 800ms linear infinite;
+}
+
+li[data-state="done"] > .mark::after,
+li[data-state="failed"] > .mark::after,
+li[data-state="failed"] > .mark::before {
+  content: "";
+  position: absolute;
+}
+
+li[data-state="done"] > .mark::after {
+  left: 0.28em;
+  top: 0.05em;
+  width: 0.28em;
+  height: 0.55em;
+  border: solid var(--done);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+  animation: draw 300ms ease-out;
+}
+
+li[data-state="kept"] > .mark {
+  background: var(--kept);
+  animation: pop 300ms ease-out;
+}
+
+li[data-state="unchecked"] > .mark {
+  border: 2px dashed var(--muted);
+  animation: pop 300ms ease-out;
+}
+
+li[data-state="failed"] > .mark::before,
+li[data-state="failed"] > .mark::after {
+  left: 0.4em;
+  top: 0;
+  width: 2px;
+  height: 0.9em;
+  background: var(--failed);
+  animation: draw 300ms ease-out;
+}
+
+li[data-state="failed"] > .mark::before {
+  transform: rotate(45deg);
+}
+
+li[data-state="failed"] > .mark::after {
+  transform: rotate(-45deg);
+}
+
+li[data-state="failed"] > .label {
+  color: var(--failed);
+}
+
+li[data-state="waiting"] > .label {
+  color: var(--muted);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes draw {
+  from {
+    clip-path: inset(0 0 100% 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@keyframes pop {
+  from {
+    transform: scale(0.2);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-0.4em);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+  }
+}

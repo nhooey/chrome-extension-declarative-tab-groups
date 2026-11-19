@@ -1,0 +1,20 @@
+{
+  "name": "declarative-tab-groups",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "build": "node scripts/build.ts",
+    "test": "node --test 'test/**/*.test.ts'",
+    "typecheck": "tsc -p tsconfig.json && tsc -p src/protocol/tsconfig.json && tsc -p src/extension/tsconfig.json && tsc -p src/host/tsconfig.json && tsc -p src/command/tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.3.7",
+    "@types/node": "^26.6.6",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}
